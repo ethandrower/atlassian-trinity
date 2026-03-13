@@ -267,6 +267,48 @@ def jira_worklogs(ctx, issue_key, days):
         sys.exit(1)
 
 
+@jira_group.command("create")
+@click.option("--project", required=True, help="Project key (e.g. ECD)")
+@click.option("--summary", required=True, help="Issue title")
+@click.option("--type", "issue_type", default="Task",
+              type=click.Choice(["Task", "Story", "Epic", "Bug", "Sub-task"], case_sensitive=False),
+              help="Issue type (default: Task)")
+@click.option("--description", help="Issue description (plain text)")
+@click.option("--assignee", help="Assignee account ID")
+@click.option("--priority", type=click.Choice(["Highest", "High", "Medium", "Low", "Lowest"]),
+              help="Priority")
+@click.option("--labels", help="Comma-separated labels")
+@click.option("--parent", "parent_key", help="Parent issue key (for Sub-tasks, or Stories under an Epic in next-gen projects)")
+@click.option("--epic", "epic_key", help="Epic key to link (classic projects — use --parent for next-gen)")
+@click.option("--points", "story_points", type=float, help="Story points")
+@click.option("--sprint", "sprint_id", type=int, help="Sprint ID to add the issue to")
+@click.option("--fix-version", help="Fix version name")
+@click.option("--components", help="Comma-separated component names")
+@click.pass_context
+def jira_create(ctx, project, summary, issue_type, description, assignee, priority,
+                labels, parent_key, epic_key, story_points, sprint_id, fix_version, components):
+    """Create a Jira issue (Task, Story, Epic, Bug, Sub-task)."""
+    from .jira.create_issue import create_jira_issue
+    result = create_jira_issue(
+        project_key=project,
+        summary=summary,
+        issue_type=issue_type,
+        description=description,
+        assignee_id=assignee,
+        priority=priority,
+        labels=labels.split(",") if labels else None,
+        parent_key=parent_key,
+        epic_key=epic_key,
+        story_points=story_points,
+        sprint_id=sprint_id,
+        fix_version=fix_version,
+        components=components.split(",") if components else None,
+    )
+    click.echo(json.dumps(result, indent=2))
+    if result.get("error"):
+        sys.exit(1)
+
+
 @jira_group.command("release-issues")
 @click.option("--project", default="ECD")
 @click.option("--days", default=14, type=int)

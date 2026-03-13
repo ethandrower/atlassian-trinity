@@ -10,6 +10,57 @@ import requests
 from ..base import get_jira_auth_headers, JIRA_BASE_URL, build_adf_comment, format_error
 
 
+def get_project_issue_types(project_key: str) -> list[dict]:
+    """Return available issue types for a project, e.g. [{"name": "Task", "id": "..."}]."""
+    resp = requests.get(
+        f"{JIRA_BASE_URL}/rest/api/3/issue/createmeta",
+        headers=get_jira_auth_headers(),
+        params={"projectKeys": project_key, "expand": "projects.issuetypes"},
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        return []
+    projects = resp.json().get("projects", [])
+    if not projects:
+        return []
+    return [
+        {"name": it["name"], "id": it["id"], "subtask": it.get("subtask", False)}
+        for it in projects[0].get("issuetypes", [])
+    ]
+
+
+def resolve_issue_type(requested: str, project_key: str) -> tuple[str, list[str]]:
+    """
+    Resolve the requested issue type against what the project supports.
+
+    Returns:
+        (resolved_type_name, available_names)
+        If no match found, returns (available_names[0], available_names) as fallback.
+    """
+    available = get_project_issue_types(project_key)
+    if not available:
+        return requested, []
+
+    names = [it["name"] for it in available]
+    requested_lower = requested.lower()
+
+    # Exact match (case-insensitive)
+    for name in names:
+        if name.lower() == requested_lower:
+            return name, names
+
+    # Partial match
+    for name in names:
+        if requested_lower in name.lower() or name.lower() in requested_lower:
+            return name, names
+
+    # No match — use first non-subtask type as default
+    default = next((n for n in names if not any(
+        it["subtask"] for it in available if it["name"] == n
+    )), names[0])
+    return default, names
+
+
 def create_jira_issue(
     project_key: str,
     summary: str,
@@ -46,10 +97,14 @@ def create_jira_issue(
         fix_version:  Fix version name
         components:   List of component names
     """
+    # Resolve issue type against what the project actually supports
+    resolved_type, available_types = resolve_issue_type(issue_type, project_key)
+    type_adjusted = resolved_type != issue_type and bool(available_types)
+
     fields: dict = {
         "project": {"key": project_key},
         "summary": summary,
-        "issuetype": {"name": issue_type},
+        "issuetype": {"name": resolved_type},
     }
 
     if description:
@@ -113,10 +168,17 @@ def create_jira_issue(
             "success": True,
             "key": issue_key,
             "id": issue_id,
-            "issue_type": issue_type,
+            "issue_type": resolved_type,
             "summary": summary,
             "project": project_key,
         }
+
+        if type_adjusted:
+            result["warning"] = (
+                f"Issue type '{issue_type}' is not available in project {project_key}. "
+                f"Used '{resolved_type}' instead. "
+                f"Available types: {available_types}"
+            )
 
         from ..base.client import JIRA_WEB_URL
         if JIRA_WEB_URL and issue_key:

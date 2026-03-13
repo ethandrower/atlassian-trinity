@@ -267,6 +267,19 @@ def jira_worklogs(ctx, issue_key, days):
         sys.exit(1)
 
 
+@jira_group.command("issue-types")
+@click.argument("project_key")
+@click.pass_context
+def jira_issue_types(ctx, project_key):
+    """List available issue types for a project."""
+    from .jira.create_issue import get_project_issue_types
+    types = get_project_issue_types(project_key)
+    if not types:
+        click.echo(json.dumps({"error": True, "message": f"Could not fetch issue types for {project_key}"}))
+        sys.exit(1)
+    click.echo(json.dumps({"project": project_key, "issue_types": types}, indent=2))
+
+
 @jira_group.command("create")
 @click.option("--project", required=True, help="Project key (e.g. ECD)")
 @click.option("--summary", required=True, help="Issue title")

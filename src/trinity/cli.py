@@ -546,6 +546,29 @@ def confluence_children(ctx, page_id):
         sys.exit(1)
 
 
+@confluence_group.command("pages")
+@click.argument("space_key")
+@click.option("--max-results", default=None, type=int, help="Cap total results (default: all)")
+@click.option("--limit", default=50, type=int, help="API page size (max 50)")
+@click.pass_context
+def confluence_pages(ctx, space_key, max_results, limit):
+    """List all pages in a Confluence space."""
+    from .confluence.list_space_pages import list_space_pages
+    result = list_space_pages(space_key, limit=limit, max_results=max_results)
+
+    if ctx.obj and ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    elif result.get("error"):
+        click.echo(f"Error: {result['message']}", err=True)
+        sys.exit(1)
+    else:
+        click.echo(f"Space: {result['space_key']}  ({result['count']} pages)")
+        for page in result["pages"]:
+            depth = len(page.get("ancestors", []))
+            indent = "  " * depth
+            click.echo(f"{indent}{page['id']}  {page['title']}  (v{page['version']})")
+
+
 @confluence_group.command("create")
 @click.option("--space", required=True, help="Space key")
 @click.option("--title", required=True, help="Page title")

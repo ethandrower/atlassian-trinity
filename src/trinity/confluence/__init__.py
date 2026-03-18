@@ -7,6 +7,7 @@ from .search import search_confluence
 from .get_spaces import get_confluence_spaces
 from .get_children import get_page_children
 from .add_comment import add_confluence_comment
+from .list_space_pages import list_space_pages
 
 __all__ = [
     "get_confluence_page",
@@ -16,4 +17,5 @@ __all__ = [
     "get_confluence_spaces",
     "get_page_children",
     "add_confluence_comment",
+    "list_space_pages",
 ]

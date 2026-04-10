@@ -48,6 +48,7 @@ dev = [
 
 [project.scripts]
 trinity = "trinity.cli:main"
+bb = "trinity.bb_compat:main"
 
 [project.urls]
 Homepage = "https://github.com/ethandrower/trinity-atlassian-cli"

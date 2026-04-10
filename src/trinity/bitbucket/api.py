@@ -228,3 +228,44 @@ class BitbucketAPI:
             return {"success": True, "user": {"username": user.get("username"), "display_name": user.get("display_name")}}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    # ── Pipeline Methods ──────────────────────────────────────────────────────
+
+    def list_pipelines(self, workspace: str, repo: str, branch: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
+        """List recent pipelines, optionally filtered by branch."""
+        endpoint = f"/repositories/{workspace}/{repo}/pipelines/"
+        params: Dict[str, Any] = {"sort": "-created_on", "pagelen": limit}
+        if branch:
+            params["target.branch"] = branch
+        return self.get(endpoint, params=params)
+
+    def get_pipeline(self, workspace: str, repo: str, pipeline_uuid: str) -> Dict[str, Any]:
+        """Get a specific pipeline by UUID."""
+        return self.get(f"/repositories/{workspace}/{repo}/pipelines/{pipeline_uuid}")
+
+    def get_pipeline_steps(self, workspace: str, repo: str, pipeline_uuid: str) -> List[Dict[str, Any]]:
+        """List all steps for a pipeline."""
+        return self.get_all_pages(f"/repositories/{workspace}/{repo}/pipelines/{pipeline_uuid}/steps/")
+
+    def get_step_log(self, workspace: str, repo: str, pipeline_uuid: str, step_uuid: str) -> str:
+        """Get the log output for a pipeline step (returns plain text)."""
+        from urllib.parse import quote
+        encoded_pipeline = quote(pipeline_uuid, safe="")
+        encoded_step = quote(step_uuid, safe="")
+        endpoint = f"/repositories/{workspace}/{repo}/pipelines/{encoded_pipeline}/steps/{encoded_step}/log"
+        url = f"{self.base_url}{endpoint}"
+        headers = self._headers()
+        headers.pop("Content-Type", None)
+        headers["Accept"] = "*/*"
+        response = self.session.get(url, headers=headers, timeout=self.timeout, allow_redirects=False)
+        if response.status_code in (307, 302):
+            s3_url = response.headers.get("Location")
+            if s3_url:
+                response = self.session.get(s3_url, timeout=self.timeout)
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code in (404, 406):
+            return ""
+        else:
+            self._handle_response(response)
+            return ""

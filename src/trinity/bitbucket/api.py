@@ -182,15 +182,26 @@ class BitbucketAPI:
     # ── Comment Methods ────────────────────────────────────────────────────────
 
     def add_comment(self, workspace: str, repo: str, pr_id: int, message: str, **kwargs) -> Dict[str, Any]:
+        # Bitbucket Cloud's inline-comment schema (v2 REST):
+        #   inline = {"path": "...", "to": <int>}    # comment on the new/added line
+        #   inline = {"path": "...", "from": <int>}  # comment on the old/removed line
+        # `path` lives at the top of `inline`, and `to`/`from` are integer line
+        # numbers — not nested objects. The API returns 400 if `path` is missing
+        # or if `to`/`from` are dicts. Bitbucket inline comments are anchored to
+        # a single line; there is no native multi-line range, so a `--from-line/
+        # --to-line` pair just anchors at `to_line` (callers can describe the
+        # range in the comment body).
         payload: dict = {"content": {"raw": message}}
 
         if kwargs.get("file"):
-            inline: dict = {"to": {"path": kwargs["file"]}}
+            inline: dict = {"path": kwargs["file"]}
+            # Prefer `to` (new side) when an explicit `line` or `to_line` is given.
             if kwargs.get("line"):
-                inline["to"]["line"] = kwargs["line"]
-            if kwargs.get("from_line") and kwargs.get("to_line"):
-                inline["from"] = {"path": kwargs["file"], "line": kwargs["from_line"]}
-                inline["to"]["line"] = kwargs["to_line"]
+                inline["to"] = kwargs["line"]
+            elif kwargs.get("to_line"):
+                inline["to"] = kwargs["to_line"]
+            elif kwargs.get("from_line"):
+                inline["from"] = kwargs["from_line"]
             payload["inline"] = inline
 
         if kwargs.get("reply_to"):

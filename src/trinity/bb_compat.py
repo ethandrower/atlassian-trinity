@@ -24,6 +24,8 @@ from rich.table import Table
 
 from .base.auth import (
     get_bitbucket_auth_headers,
+    get_default_repo,
+    get_workspace,
     is_authenticated as _is_authenticated,
     load_config,
     save_config,
@@ -60,13 +62,26 @@ def _api() -> BitbucketAPI:
     return BitbucketAPI()
 
 
-def _resolve_repo(ctx):
-    """Resolve workspace/repo from flags, env, or current git remote."""
+def _resolve_repo(ctx, *, require: bool = True):
+    """Resolve workspace/repo for a bb command.
+
+    Priority (each step only fills in what's still missing):
+      1. -w / -R flags (already populated into ctx.obj)
+      2. Current git remote — pulled from any bitbucket.org remote URL
+      3. Config: bitbucket.workspace + bitbucket.default_repo
+
+    When ``require`` is True (the default for read/write commands) and
+    workspace+repo can't both be resolved, exit with an actionable error
+    naming the -R flag, BITBUCKET_DEFAULT_REPO env var, and config field
+    — rather than letting the API return a misleading "Resource not found".
+    """
     workspace = ctx.obj.get("workspace")
     repo = ctx.obj.get("repo")
+
+    # 2. Git remote
     if not workspace or not repo:
         try:
-            from git import Repo, InvalidGitRepositoryError
+            from git import Repo
             git_repo = Repo(search_parent_directories=True)
             for remote in git_repo.remotes:
                 m = re.search(r"bitbucket\.org[:/]([^/]+)/([^/.]+)", remote.url)
@@ -76,6 +91,32 @@ def _resolve_repo(ctx):
                     break
         except Exception:
             pass
+
+    # 3. Config
+    if not workspace:
+        workspace = get_workspace() or ""
+    if not repo:
+        default = get_default_repo()
+        if default:
+            # Allow "workspace/repo" or bare "repo" in the config field —
+            # mirrors the shorthand accepted by the -R flag.
+            if "/" in default:
+                ws_default, _, repo_default = default.partition("/")
+                workspace = workspace or ws_default
+                repo = repo_default
+            else:
+                repo = default
+
+    if require and (not workspace or not repo):
+        _error(
+            "No Bitbucket repo specified.\n"
+            "  • Pass -R workspace/repo (or just -R repo if -w is set)\n"
+            "  • Or set BITBUCKET_DEFAULT_REPO in your environment\n"
+            "  • Or add bitbucket.default_repo to ~/.trinity/config.yaml\n"
+            "  • Or run `bb` from inside a clone with a bitbucket.org remote"
+        )
+        sys.exit(2)
+
     return workspace or "", repo or ""
 
 

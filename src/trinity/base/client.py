@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .auth import get_jira_auth_headers, get_bitbucket_auth_headers
+from .auth import get_jira_auth_headers, get_bitbucket_auth_headers, load_config
 from .exceptions import (
     AtlassianAPIError,
     AuthenticationError,
@@ -30,15 +30,76 @@ from .exceptions import (
 load_dotenv()
 
 # ── URL constants ──────────────────────────────────────────────────────────────
-ATLASSIAN_CLOUD_ID = os.getenv("ATLASSIAN_CLOUD_ID", "")
+#
+# Trinity authenticates via Basic Auth (email + API token), which the OAuth
+# gateway under api.atlassian.com/ex/{product}/{cloudId} does NOT accept — it
+# only honors OAuth bearer tokens. The correct URL family for Basic Auth is
+# the instance domain (e.g. https://acme.atlassian.net for Jira, with
+# Confluence served from the same host under /wiki/...). The constants below
+# are resolved lazily from env vars first, then ~/.trinity/config.yaml's
+# atlassian.jira_url, so existing callsites (`from ..base import
+# JIRA_BASE_URL`) keep working unchanged.
 
-JIRA_BASE_URL = f"https://api.atlassian.com/ex/jira/{ATLASSIAN_CLOUD_ID}"
-AGILE_BASE_URL = f"https://api.atlassian.com/ex/jira/{ATLASSIAN_CLOUD_ID}/rest/agile/1.0"
-CONFLUENCE_BASE_URL = f"https://api.atlassian.com/ex/confluence/{ATLASSIAN_CLOUD_ID}"
+# Bitbucket has a single global base URL — no cloud-id segment and no
+# per-instance domain — so it stays a plain constant.
 BITBUCKET_BASE_URL = "https://api.bitbucket.org/2.0"
 
-# Web-facing URL for building clickable links
-JIRA_WEB_URL = os.getenv("ATLASSIAN_JIRA_URL") or os.getenv("JIRA_INSTANCE_URL", "")
+
+def _resolve_jira_url() -> str:
+    """
+    Resolve the Jira instance URL (e.g. https://acme.atlassian.net).
+
+    Priority:
+      1. ATLASSIAN_JIRA_URL env var (or legacy JIRA_INSTANCE_URL)
+      2. atlassian.jira_url from ~/.trinity/config.yaml
+      3. Empty string — caller will see a clear HTTP error rather than
+         the misleading 404s the old gateway URLs produced when
+         cloudId was unset.
+    """
+    try:
+        cfg = (load_config().get("atlassian") or {}).get("jira_url")
+    except Exception:
+        # Never let config load failures block import — `trinity config`
+        # itself must work with no config file in place.
+        cfg = None
+    base = (
+        os.getenv("ATLASSIAN_JIRA_URL")
+        or os.getenv("JIRA_INSTANCE_URL")
+        or cfg
+        or ""
+    )
+    return base.rstrip("/")
+
+
+def _resolve_cloud_id() -> str:
+    """Resolve the Atlassian cloudId. No longer used to build URLs after
+    the gateway → instance-domain switch, but still exposed for callers
+    that want it for OAuth-style URLs."""
+    try:
+        cfg = (load_config().get("atlassian") or {}).get("cloud_id")
+    except Exception:
+        cfg = None
+    return os.getenv("ATLASSIAN_CLOUD_ID") or cfg or ""
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy URL constants — see comment block above."""
+    if name == "JIRA_BASE_URL":
+        return _resolve_jira_url()
+    if name == "AGILE_BASE_URL":
+        base = _resolve_jira_url()
+        return f"{base}/rest/agile/1.0" if base else ""
+    if name == "CONFLUENCE_BASE_URL":
+        # Confluence shares the instance domain. Callers append
+        # /wiki/rest/api/... to this base — that path is correct for
+        # both the gateway and instance-domain URL families, so no
+        # callsite changes are needed.
+        return _resolve_jira_url()
+    if name == "JIRA_WEB_URL":
+        return _resolve_jira_url()
+    if name == "ATLASSIAN_CLOUD_ID":
+        return _resolve_cloud_id()
+    raise AttributeError(f"module 'trinity.base.client' has no attribute {name!r}")
 
 
 # ── Shared helpers ─────────────────────────────────────────────────────────────

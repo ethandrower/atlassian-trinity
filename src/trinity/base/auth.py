@@ -41,6 +41,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "username": None,
         "app_password": None,
         "workspace": None,
+        # Default repo for `bb` commands invoked without -R. Resolution
+        # order: -R flag → BITBUCKET_DEFAULT_REPO env → this field →
+        # current git remote → error. Keeps `bb pr list` ergonomic when
+        # working out of one main repo.
+        "default_repo": None,
+        # Per-repo bearer tokens, keyed by "workspace/repo" slug. Lets a
+        # user keep separate repository access tokens (each scoped to
+        # exactly one repo) without losing cross-repo functionality.
+        # Lookup order: this map → BITBUCKET_REPO_TOKEN env / repo_token
+        # field → username + app_password Basic Auth.
+        "repo_tokens": {},
     },
     "api": {
         "timeout": 30,
@@ -139,28 +150,50 @@ def get_confluence_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict
 
 # ── Bitbucket ──────────────────────────────────────────────────────────────────
 
-def get_bitbucket_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+def get_bitbucket_auth_headers(
+    config: Optional[Dict[str, Any]] = None,
+    repo: Optional[str] = None,
+) -> Dict[str, str]:
     """
     Return auth headers for Bitbucket REST API v2.0.
 
     Priority:
-      1. Bearer token  (BITBUCKET_REPO_TOKEN env var or config)
-      2. Basic auth    (BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD)
+      1. Per-repo bearer token  (bitbucket.repo_tokens["workspace/repo"]),
+         when ``repo`` is supplied and a matching entry exists. This is
+         the only correct path for users who manage multiple repository
+         access tokens — each is single-repo-scoped, so picking the wrong
+         one produces silent 404s on cross-repo calls.
+      2. Global bearer token    (BITBUCKET_REPO_TOKEN env or repo_token
+         field). Works for the single-repo case and for any
+         workspace-scoped token a user has stuffed in the same field.
+      3. Basic auth             (BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD).
+         Recommended for cross-repo use — App Passwords are workspace-wide.
+
+    Args:
+        config: Optional pre-loaded config; loaded fresh if None.
+        repo:   Optional "workspace/repo" slug used to look up a per-repo
+                token. Callers that know the repo (i.e. anything that
+                hits a /repositories/{ws}/{repo}/... URL) should pass it
+                so per-repo tokens are honored.
     """
     if config is None:
         config = load_config()
 
     bb = config.get("bitbucket", {})
 
+    # 1. Per-repo token map — only consulted when caller passed a slug.
+    if repo:
+        repo_tokens = bb.get("repo_tokens") or {}
+        per_repo = repo_tokens.get(repo) if isinstance(repo_tokens, dict) else None
+        if per_repo:
+            return _bearer_headers(per_repo)
+
+    # 2. Single global bearer token.
     repo_token = os.getenv("BITBUCKET_REPO_TOKEN") or bb.get("repo_token")
     if repo_token:
-        return {
-            "Authorization": f"Bearer {repo_token}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "trinity-atlassian-cli/0.1.0",
-        }
+        return _bearer_headers(repo_token)
 
+    # 3. App Password / username Basic Auth.
     username = os.getenv("BITBUCKET_USERNAME") or bb.get("username")
     app_password = os.getenv("BITBUCKET_APP_PASSWORD") or bb.get("app_password")
     if username and app_password:
@@ -176,6 +209,15 @@ def get_bitbucket_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict[
         "Bitbucket credentials missing. Set BITBUCKET_REPO_TOKEN "
         "(or run: trinity config --bb-token YOUR_TOKEN)"
     )
+
+
+def _bearer_headers(token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "trinity-atlassian-cli/0.1.0",
+    }
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -199,4 +241,14 @@ def get_workspace(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
     return (
         os.getenv("BITBUCKET_WORKSPACE")
         or config.get("bitbucket", {}).get("workspace")
+    )
+
+
+def get_default_repo(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
+    """Return the configured Bitbucket default repo (workspace/repo or just repo)."""
+    if config is None:
+        config = load_config()
+    return (
+        os.getenv("BITBUCKET_DEFAULT_REPO")
+        or config.get("bitbucket", {}).get("default_repo")
     )

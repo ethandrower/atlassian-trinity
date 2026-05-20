@@ -472,6 +472,133 @@ def bb_activity(ctx, pr_id, limit):
     click.echo(json.dumps(result, indent=2))
 
 
+@bb_group.command("create")
+@click.option("--title", "-t", required=True, help="PR title")
+@click.option("--description", "-d", default="", help="PR description (markdown)")
+@click.option("--description-file", type=click.Path(exists=True, dir_okay=False),
+              help="Read description from file (overrides --description)")
+@click.option("--source", "-s", help="Source branch (default: current git branch)")
+@click.option("--dest", default="dev", help="Destination branch (default: dev)")
+@click.option("--reviewers", help="Comma-separated reviewer usernames or UUIDs")
+@click.option("--close-branch", is_flag=True, help="Close source branch on merge")
+@click.option("--web", is_flag=True, help="Open the created PR in a browser")
+@click.pass_context
+def bb_create(ctx, title, description, description_file, source, dest, reviewers,
+              close_branch, web):
+    """Create a pull request."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import create_pr
+    if description_file:
+        with open(description_file) as f:
+            description = f.read()
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = create_pr(
+        api, workspace, repo,
+        title=title, description=description,
+        source=source, dest=dest, reviewers=reviewers,
+        close_branch=close_branch, web=web,
+    )
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        pr_id = result.get("id")
+        html_url = result.get("links", {}).get("html", {}).get("href", "")
+        console.print(f"[green]PR #{pr_id} created:[/green] {html_url}")
+
+
+@bb_group.command("merge")
+@click.argument("pr_id", type=int)
+@click.option("--strategy",
+              type=click.Choice(["merge_commit", "squash", "fast_forward"]),
+              default="merge_commit", help="Merge strategy")
+@click.option("--message", "-m", help="Merge commit message")
+@click.option("--close-branch", is_flag=True, help="Close source branch after merge")
+@click.pass_context
+def bb_merge(ctx, pr_id, strategy, message, close_branch):
+    """Merge a pull request."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import merge_pr
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = merge_pr(api, workspace, repo, pr_id, strategy=strategy,
+                      message=message, close_branch=close_branch)
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        console.print(f"[green]PR #{pr_id} merged[/green] ({strategy})")
+
+
+@bb_group.command("approve")
+@click.argument("pr_id", type=int)
+@click.pass_context
+def bb_approve(ctx, pr_id):
+    """Approve a pull request."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import approve_pr
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = approve_pr(api, workspace, repo, pr_id)
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        console.print(f"[green]PR #{pr_id} approved[/green]")
+
+
+@bb_group.command("decline")
+@click.argument("pr_id", type=int)
+@click.pass_context
+def bb_decline(ctx, pr_id):
+    """Decline a pull request."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import decline_pr
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = decline_pr(api, workspace, repo, pr_id)
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        console.print(f"[yellow]PR #{pr_id} declined[/yellow]")
+
+
+@bb_group.command("update")
+@click.argument("pr_id", type=int)
+@click.option("--title", help="New title")
+@click.option("--description", help="New description")
+@click.option("--description-file", type=click.Path(exists=True, dir_okay=False),
+              help="Read description from file")
+@click.option("--dest", help="New destination branch")
+@click.pass_context
+def bb_update(ctx, pr_id, title, description, description_file, dest):
+    """Update an existing pull request's title / description / destination."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import update_pr
+    if description_file:
+        with open(description_file) as f:
+            description = f.read()
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = update_pr(api, workspace, repo, pr_id,
+                       title=title, description=description, dest=dest)
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        console.print(f"[green]PR #{pr_id} updated[/green]")
+
+
+@bb_group.command("pipelines")
+@click.argument("pr_id", type=int)
+@click.pass_context
+def bb_pipelines(ctx, pr_id):
+    """Show pipeline status for a pull request."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import get_pipeline_status
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = get_pipeline_status(api, workspace, repo, pr_id)
+    click.echo(json.dumps(result, indent=2))
+
+
 # ── Confluence subgroup ────────────────────────────────────────────────────────
 
 @cli.group("confluence")

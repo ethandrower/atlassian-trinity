@@ -758,11 +758,29 @@ def confluence_comment(ctx, page_id, text):
 @click.option("--token", help="Atlassian API token")
 @click.option("--cloud-id", help="Atlassian Cloud ID")
 @click.option("--jira-url", help="Jira instance URL (e.g., https://co.atlassian.net)")
-@click.option("--bb-token", help="Bitbucket repo access token")
+@click.option("--bb-token", help="Bitbucket workspace-level repo access token (Bearer)")
+@click.option(
+    "--bb-repo-token",
+    "bb_repo_tokens",
+    multiple=True,
+    help="Per-repo Bitbucket token in WORKSPACE/REPO=TOKEN form. Repeatable. "
+         "Slug matches the auto-extracted /repositories/{workspace}/{repo}/... "
+         "path used by the API client, so a workspace prefix is required. "
+         "Takes precedence over --bb-token for matching repos. "
+         "Example: --bb-repo-token citemed/ai_backend=ATCTT... "
+         "--bb-repo-token citemed/citemed_web=ATCTT...",
+)
+@click.option(
+    "--bb-repo-token-remove",
+    "bb_repo_tokens_remove",
+    multiple=True,
+    help="Remove a per-repo Bitbucket token by WORKSPACE/REPO slug. Repeatable.",
+)
 @click.option("--bb-workspace", help="Default Bitbucket workspace")
 @click.option("--list", "list_config", is_flag=True, help="Show current config")
 @click.option("--reset", is_flag=True, help="Reset to defaults")
-def config(email, token, cloud_id, jira_url, bb_token, bb_workspace, list_config, reset):
+def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
+           bb_repo_tokens_remove, bb_workspace, list_config, reset):
     """Manage Trinity credentials."""
     from .base.auth import load_config, save_config
 
@@ -776,11 +794,14 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_workspace, list_config
 
     if list_config:
         display = json.loads(json.dumps(cfg))
-        # Mask tokens
+        # Mask tokens (top-level + per-repo)
         if display.get("atlassian", {}).get("api_token"):
             display["atlassian"]["api_token"] = "***"
         if display.get("bitbucket", {}).get("repo_token"):
             display["bitbucket"]["repo_token"] = "***"
+        repo_tokens = display.get("bitbucket", {}).get("repo_tokens") or {}
+        if repo_tokens:
+            display["bitbucket"]["repo_tokens"] = {k: "***" for k in repo_tokens}
         click.echo(json.dumps(display, indent=2))
         return
 
@@ -797,9 +818,38 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_workspace, list_config
     if bb_workspace:
         cfg["bitbucket"]["workspace"] = bb_workspace
 
-    if any([email, token, cloud_id, jira_url, bb_token, bb_workspace]):
+    repo_tokens_changed = False
+    if bb_repo_tokens or bb_repo_tokens_remove:
+        cfg["bitbucket"].setdefault("repo_tokens", {})
+        for pair in bb_repo_tokens:
+            if "=" not in pair:
+                raise click.UsageError(
+                    f"--bb-repo-token expects REPO=TOKEN, got: {pair!r}"
+                )
+            repo_slug, repo_token_value = pair.split("=", 1)
+            repo_slug = repo_slug.strip()
+            repo_token_value = repo_token_value.strip()
+            if not repo_slug or not repo_token_value:
+                raise click.UsageError(
+                    f"--bb-repo-token needs a non-empty repo and token: {pair!r}"
+                )
+            cfg["bitbucket"]["repo_tokens"][repo_slug] = repo_token_value
+            repo_tokens_changed = True
+        for repo_slug in bb_repo_tokens_remove:
+            cfg["bitbucket"]["repo_tokens"].pop(repo_slug.strip(), None)
+            repo_tokens_changed = True
+
+    if any([email, token, cloud_id, jira_url, bb_token, bb_workspace,
+            repo_tokens_changed]):
         save_config(cfg)
-        console.print("[green]Config saved.[/green]")
+        if repo_tokens_changed:
+            slugs = sorted((cfg["bitbucket"].get("repo_tokens") or {}).keys())
+            console.print(
+                f"[green]Config saved.[/green] Per-repo tokens now set for: "
+                f"{', '.join(slugs) if slugs else '(none)'}"
+            )
+        else:
+            console.print("[green]Config saved.[/green]")
     else:
         console.print("Use options to set values. Run [cyan]trinity config --help[/cyan] for details.")
 

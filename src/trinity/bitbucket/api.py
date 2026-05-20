@@ -1,5 +1,6 @@
 """Bitbucket Cloud REST API v2.0 client."""
 
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -18,6 +19,17 @@ from ..base.exceptions import (
 )
 
 BITBUCKET_BASE_URL = "https://api.bitbucket.org/2.0"
+
+# Bitbucket endpoints that target a specific repo look like:
+#   /repositories/{workspace}/{repo}/...
+# Capturing the repo slug lets us pick a per-repo token when one is configured.
+_REPO_PATH_RE = re.compile(r"^/repositories/[^/]+/([^/]+)")
+
+
+def _repo_from_endpoint(endpoint: str) -> Optional[str]:
+    """Extract the repo slug from a v2 Bitbucket endpoint, or None if absent."""
+    m = _REPO_PATH_RE.match(endpoint)
+    return m.group(1) if m else None
 
 
 class BitbucketAPI:
@@ -38,8 +50,8 @@ class BitbucketAPI:
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
 
-    def _headers(self) -> Dict[str, str]:
-        return get_bitbucket_auth_headers()
+    def _headers(self, repo: Optional[str] = None) -> Dict[str, str]:
+        return get_bitbucket_auth_headers(repo=repo)
 
     def _handle_response(self, response: requests.Response) -> Any:
         if response.status_code in (200, 201):
@@ -64,7 +76,7 @@ class BitbucketAPI:
 
     def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
-        headers = self._headers()
+        headers = self._headers(repo=_repo_from_endpoint(endpoint))
         if "headers" in kwargs:
             headers.update(kwargs.pop("headers"))
         response = self.session.request(method=method, url=url, headers=headers, timeout=self.timeout, **kwargs)

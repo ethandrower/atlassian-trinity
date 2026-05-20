@@ -41,6 +41,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "username": None,
         "app_password": None,
         "workspace": None,
+        # Per-repo access tokens. Map of "repo_slug" -> "token". When a request
+        # targets a repo whose slug appears here, that token is used in
+        # preference to the workspace-level repo_token / app_password. Lets
+        # one Trinity install hold credentials for N sibling repos without
+        # promoting any single token to workspace scope.
+        "repo_tokens": {},
     },
     "api": {
         "timeout": 30,
@@ -139,19 +145,39 @@ def get_confluence_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict
 
 # ── Bitbucket ──────────────────────────────────────────────────────────────────
 
-def get_bitbucket_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+def get_bitbucket_auth_headers(
+    config: Optional[Dict[str, Any]] = None,
+    repo: Optional[str] = None,
+) -> Dict[str, str]:
     """
     Return auth headers for Bitbucket REST API v2.0.
 
     Priority:
-      1. Bearer token  (BITBUCKET_REPO_TOKEN env var or config)
-      2. Basic auth    (BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD)
+      1. Per-repo token  (config bitbucket.repo_tokens[repo] when ``repo`` given)
+      2. Bearer token    (BITBUCKET_REPO_TOKEN env var or config repo_token)
+      3. Basic auth      (BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD)
+
+    Passing ``repo`` lets callers target one repo per request without changing
+    the global config — the per-repo token map gives a clean way to hold
+    least-privilege tokens for N sibling repos in one Trinity install.
     """
     if config is None:
         config = load_config()
 
     bb = config.get("bitbucket", {})
 
+    # 1. Per-repo token (most specific wins)
+    if repo:
+        per_repo = (bb.get("repo_tokens") or {}).get(repo)
+        if per_repo:
+            return {
+                "Authorization": f"Bearer {per_repo}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "trinity-atlassian-cli/0.1.0",
+            }
+
+    # 2. Workspace-level Bearer token (env var > config)
     repo_token = os.getenv("BITBUCKET_REPO_TOKEN") or bb.get("repo_token")
     if repo_token:
         return {
@@ -161,6 +187,7 @@ def get_bitbucket_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict[
             "User-Agent": "trinity-atlassian-cli/0.1.0",
         }
 
+    # 3. Basic auth fallback
     username = os.getenv("BITBUCKET_USERNAME") or bb.get("username")
     app_password = os.getenv("BITBUCKET_APP_PASSWORD") or bb.get("app_password")
     if username and app_password:
@@ -172,9 +199,15 @@ def get_bitbucket_auth_headers(config: Optional[Dict[str, Any]] = None) -> Dict[
             "User-Agent": "trinity-atlassian-cli/0.1.0",
         }
 
+    hint = (
+        f"No token configured for repo '{repo}' and no workspace-level token. "
+        if repo
+        else ""
+    )
     raise AuthenticationError(
-        "Bitbucket credentials missing. Set BITBUCKET_REPO_TOKEN "
-        "(or run: trinity config --bb-token YOUR_TOKEN)"
+        f"Bitbucket credentials missing. {hint}Set BITBUCKET_REPO_TOKEN "
+        "(or run: trinity config --bb-token YOUR_TOKEN  "
+        "or: trinity config --bb-repo-token REPO=TOKEN)"
     )
 
 

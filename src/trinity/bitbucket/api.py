@@ -20,16 +20,15 @@ from ..base.exceptions import (
 
 BITBUCKET_BASE_URL = "https://api.bitbucket.org/2.0"
 
-# Bitbucket endpoints that target a specific repo look like:
-#   /repositories/{workspace}/{repo}/...
-# Capturing the repo slug lets us pick a per-repo token when one is configured.
-_REPO_PATH_RE = re.compile(r"^/repositories/[^/]+/([^/]+)")
+# Pulls the workspace/repo slug out of any /repositories/{ws}/{repo}/...
+# endpoint so we can route to a per-repo token without making every call
+# site pass the slug explicitly.
+_REPO_SLUG_RE = re.compile(r"^/repositories/([^/]+)/([^/]+)")
 
 
-def _repo_from_endpoint(endpoint: str) -> Optional[str]:
-    """Extract the repo slug from a v2 Bitbucket endpoint, or None if absent."""
-    m = _REPO_PATH_RE.match(endpoint)
-    return m.group(1) if m else None
+def _slug_from_endpoint(endpoint: str) -> Optional[str]:
+    m = _REPO_SLUG_RE.match(endpoint)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
 
 
 class BitbucketAPI:
@@ -53,7 +52,11 @@ class BitbucketAPI:
     def _headers(self, repo: Optional[str] = None) -> Dict[str, str]:
         return get_bitbucket_auth_headers(repo=repo)
 
-    def _handle_response(self, response: requests.Response) -> Any:
+    def _handle_response(
+        self,
+        response: requests.Response,
+        repo: Optional[str] = None,
+    ) -> Any:
         if response.status_code in (200, 201):
             return response.json() if response.content else {}
         if response.status_code == 204:
@@ -63,7 +66,26 @@ class BitbucketAPI:
         if response.status_code == 403:
             raise PermissionError("Insufficient permissions.")
         if response.status_code == 404:
-            raise NotFoundError("Resource not found.")
+            # Bitbucket repository access tokens are scoped to a single
+            # repo; hitting any other repo's URL with such a token
+            # returns a generic 404 with a body that mentions "may not
+            # have access". When that pattern shows up, surface the
+            # likely root cause so users don't chase a phantom missing
+            # resource.
+            hint = ""
+            if repo:
+                try:
+                    body = response.text or ""
+                except Exception:
+                    body = ""
+                if "may not have access" in body or "this repository" in body.lower():
+                    hint = (
+                        f" (the active token may not have access to {repo}; "
+                        "if you're using a repository access token, it's scoped "
+                        "to one repo — set bitbucket.repo_tokens or use a "
+                        "workspace-scoped App Password)"
+                    )
+            raise NotFoundError(f"Resource not found.{hint}")
         if response.status_code == 409:
             raise ConflictError("Conflict — cannot complete in current state.")
         if response.status_code == 429:
@@ -76,11 +98,12 @@ class BitbucketAPI:
 
     def _request(self, method: str, endpoint: str, **kwargs) -> Any:
         url = f"{self.base_url}{endpoint}"
-        headers = self._headers(repo=_repo_from_endpoint(endpoint))
+        repo = _slug_from_endpoint(endpoint)
+        headers = self._headers(repo=repo)
         if "headers" in kwargs:
             headers.update(kwargs.pop("headers"))
         response = self.session.request(method=method, url=url, headers=headers, timeout=self.timeout, **kwargs)
-        return self._handle_response(response)
+        return self._handle_response(response, repo=repo)
 
     def get(self, endpoint: str, params: Optional[Dict] = None) -> Any:
         return self._request("GET", endpoint, params=params)

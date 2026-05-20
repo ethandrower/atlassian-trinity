@@ -763,15 +763,18 @@ def confluence_comment(ctx, page_id, text):
     "--bb-repo-token",
     "bb_repo_tokens",
     multiple=True,
-    help="Per-repo Bitbucket token in REPO=TOKEN form. Repeatable. "
+    help="Per-repo Bitbucket token in WORKSPACE/REPO=TOKEN form. Repeatable. "
+         "Slug matches the auto-extracted /repositories/{workspace}/{repo}/... "
+         "path used by the API client, so a workspace prefix is required. "
          "Takes precedence over --bb-token for matching repos. "
-         "Example: --bb-repo-token ai_backend=ATCTT... --bb-repo-token citemed_web=ATCTT...",
+         "Example: --bb-repo-token citemed/ai_backend=ATCTT... "
+         "--bb-repo-token citemed/citemed_web=ATCTT...",
 )
 @click.option(
     "--bb-repo-token-remove",
     "bb_repo_tokens_remove",
     multiple=True,
-    help="Remove a per-repo Bitbucket token by repo slug. Repeatable.",
+    help="Remove a per-repo Bitbucket token by WORKSPACE/REPO slug. Repeatable.",
 )
 @click.option("--bb-workspace", help="Default Bitbucket workspace")
 @click.option("--list", "list_config", is_flag=True, help="Show current config")

@@ -595,7 +595,7 @@ def bb_pipelines(ctx, pr_id):
     from .bitbucket.commands import get_pipeline_status
     api = BitbucketAPI()
     workspace, repo = _bb_context(ctx)
-    result = get_pipeline_status(api, workspace, repo, pr_id)
+    result = get_pipeline_status(api, workspace, repo, pr_id=pr_id)
     click.echo(json.dumps(result, indent=2))
 
 

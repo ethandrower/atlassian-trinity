@@ -586,6 +586,30 @@ def bb_update(ctx, pr_id, title, description, description_file, dest):
         console.print(f"[green]PR #{pr_id} updated[/green]")
 
 
+@bb_group.command("run-pipeline")
+@click.argument("pattern")
+@click.option("-b", "--branch", required=True, help="Branch to run the pipeline on")
+@click.pass_context
+def bb_run_pipeline(ctx, pattern, branch):
+    """Trigger a custom pipeline (e.g. review-app, full-tests) on a branch.
+
+    PATTERN is the custom pipeline name from bitbucket-pipelines.yml's `custom:`
+    section, or "default" to run the branch's default pipeline.
+    """
+    from .bitbucket.api import BitbucketAPI
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = api.trigger_pipeline(
+        workspace, repo, branch, pattern=None if pattern == "default" else pattern
+    )
+    build = result.get("build_number")
+    uuid = result.get("uuid", "")
+    console.print(
+        f"[green]Pipeline #{build} triggered[/green] ({pattern} on {branch}) "
+        f"https://bitbucket.org/{workspace}/{repo}/pipelines/results/{build}"
+    )
+
+
 @bb_group.command("pipelines")
 @click.argument("pr_id", type=int)
 @click.pass_context

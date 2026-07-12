@@ -285,6 +285,21 @@ class BitbucketAPI:
             params["target.branch"] = branch
         return self.get(endpoint, params=params)
 
+    def trigger_pipeline(
+        self, workspace: str, repo: str, branch: str, pattern: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Trigger a pipeline run on a branch — a custom pipeline when `pattern` is given
+        (e.g. "review-app", "full-tests"), else the branch's default pipeline."""
+        endpoint = f"/repositories/{workspace}/{repo}/pipelines/"
+        target: Dict[str, Any] = {
+            "type": "pipeline_ref_target",
+            "ref_type": "branch",
+            "ref_name": branch,
+        }
+        if pattern:
+            target["selector"] = {"type": "custom", "pattern": pattern}
+        return self.post(endpoint, json={"target": target})
+
     def get_pipeline(self, workspace: str, repo: str, pipeline_uuid: str) -> Dict[str, Any]:
         """Get a specific pipeline by UUID."""
         return self.get(f"/repositories/{workspace}/{repo}/pipelines/{pipeline_uuid}")

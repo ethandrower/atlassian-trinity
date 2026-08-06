@@ -481,10 +481,11 @@ def bb_activity(ctx, pr_id, limit):
 @click.option("--dest", default="dev", help="Destination branch (default: dev)")
 @click.option("--reviewers", help="Comma-separated reviewer usernames or UUIDs")
 @click.option("--close-branch", is_flag=True, help="Close source branch on merge")
+@click.option("--draft", is_flag=True, help="Open as a draft PR (not ready for review)")
 @click.option("--web", is_flag=True, help="Open the created PR in a browser")
 @click.pass_context
 def bb_create(ctx, title, description, description_file, source, dest, reviewers,
-              close_branch, web):
+              close_branch, draft, web):
     """Create a pull request."""
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import create_pr
@@ -497,14 +498,15 @@ def bb_create(ctx, title, description, description_file, source, dest, reviewers
         api, workspace, repo,
         title=title, description=description,
         source=source, dest=dest, reviewers=reviewers,
-        close_branch=close_branch, web=web,
+        close_branch=close_branch, draft=draft, web=web,
     )
     if ctx.obj.get("output_json"):
         click.echo(json.dumps(result, indent=2))
     else:
         pr_id = result.get("id")
         html_url = result.get("links", {}).get("html", {}).get("href", "")
-        console.print(f"[green]PR #{pr_id} created:[/green] {html_url}")
+        label = "draft PR" if result.get("draft") else "PR"
+        console.print(f"[green]{label} #{pr_id} created:[/green] {html_url}")
 
 
 @bb_group.command("merge")

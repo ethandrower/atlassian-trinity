@@ -44,6 +44,7 @@ def create_pr(
     reviewers: Optional[str] = None,
     close_branch: bool = False,
     web: bool = False,
+    draft: bool = False,
     **kwargs,
 ) -> Dict[str, Any]:
     source_branch = source or _current_branch() or "main"
@@ -61,6 +62,7 @@ def create_pr(
         destination_branch=dest or "main",
         close_source_branch=close_branch,
         reviewers=reviewer_list or None,
+        draft=draft,
     )
 
     if web:

@@ -196,17 +196,18 @@ def pr():
 @click.option("--dest", "dest", help="Alias for --base")
 @click.option("-r", "--reviewers", help="Comma-separated list of reviewers")
 @click.option("--close-branch", is_flag=True, help="Close source branch when merged")
+@click.option("--draft", is_flag=True, help="Open as a draft PR (not ready for review)")
 @click.option("--web", is_flag=True, help="Open in web browser after creation")
 @click.pass_context
 @validate_auth
-def pr_create(ctx, title, description, source, dest, reviewers, close_branch, web):
+def pr_create(ctx, title, description, source, dest, reviewers, close_branch, draft, web):
     """Create a pull request."""
     try:
         workspace, repo = _resolve_repo(ctx)
         result = create_pr(
             _api(), workspace, repo,
             title=title, description=description, source=source, dest=dest,
-            reviewers=reviewers, close_branch=close_branch, web=web,
+            reviewers=reviewers, close_branch=close_branch, draft=draft, web=web,
         )
         if ctx.obj["output_json"]:
             click.echo(json.dumps(result, indent=2))

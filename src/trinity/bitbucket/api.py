@@ -158,6 +158,10 @@ class BitbucketAPI:
             payload["close_source_branch"] = True
         if kwargs.get("reviewers"):
             payload["reviewers"] = kwargs["reviewers"]
+        # Only send `draft` when asked. Bitbucket defaults it to false, and omitting
+        # the key keeps the payload identical for every existing caller.
+        if kwargs.get("draft"):
+            payload["draft"] = True
         return self.post(f"/repositories/{workspace}/{repo}/pullrequests", json=payload)
 
     def get_pull_request(self, workspace: str, repo: str, pr_id: int) -> Dict[str, Any]:

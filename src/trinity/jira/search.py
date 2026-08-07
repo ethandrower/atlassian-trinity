@@ -27,7 +27,7 @@ def search_jira(
         fields = [
             "summary", "status", "assignee", "priority",
             "created", "updated", "issuetype", "labels",
-            "reporter", "description",
+            "reporter", "description", "parent",
         ]
 
     payload: dict = {"jql": jql, "maxResults": min(max_results, 100), "fields": fields}
@@ -62,6 +62,14 @@ def search_jira(
                 "labels": f.get("labels", []),
                 "created": f.get("created"),
                 "updated": f.get("updated"),
+                # Parent epic/initiative. get_issue already exposes this; search did
+                # not, so bulk callers saw every issue as an orphan and had to fall
+                # back to one `show` per key to recover the hierarchy.
+                "epic_key": f.get("parent", {}).get("key") if f.get("parent") else None,
+                "epic_summary": (
+                    f.get("parent", {}).get("fields", {}).get("summary")
+                    if f.get("parent") else None
+                ),
             })
 
         return {"total": data.get("total", 0), "count": len(issues), "issues": issues}

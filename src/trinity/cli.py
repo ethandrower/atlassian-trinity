@@ -124,11 +124,12 @@ def jira_transition(ctx, issue_key, transition_name, transition_id, comment):
 @click.option("--assignee", help="Account ID")
 @click.option("--priority", help="Priority name")
 @click.option("--summary", help="New title")
+@click.option("--parent", "parent_key", help="Reparent under this issue key ('none' to orphan)")
 @click.option("--labels", help="Comma-separated labels (replaces)")
 @click.option("--add-labels", help="Labels to add")
 @click.option("--remove-labels", help="Labels to remove")
 @click.pass_context
-def jira_edit(ctx, issue_key, assignee, priority, summary, labels, add_labels, remove_labels):
+def jira_edit(ctx, issue_key, assignee, priority, summary, parent_key, labels, add_labels, remove_labels):
     """Update fields on a Jira issue."""
     from .jira.edit_issue import edit_jira_issue
     fields: dict = {}
@@ -139,6 +140,8 @@ def jira_edit(ctx, issue_key, assignee, priority, summary, labels, add_labels, r
         fields["priority"] = {"name": priority}
     if summary:
         fields["summary"] = summary
+    if parent_key:
+        fields["parent"] = None if parent_key.lower() == "none" else {"key": parent_key}
     if labels:
         fields["labels"] = [l.strip() for l in labels.split(",")]
     if add_labels:

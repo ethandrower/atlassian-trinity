@@ -61,11 +61,12 @@ def edit_jira_issue(
 @click.option("--assignee", help="Account ID (use 'none' to unassign)")
 @click.option("--priority", help="Priority name (High, Medium, Low)")
 @click.option("--summary", help="New title")
+@click.option("--parent", "parent_key", help="Reparent under this issue key (use 'none' to orphan)")
 @click.option("--labels", help="Comma-separated labels (replaces existing)")
 @click.option("--add-labels", help="Comma-separated labels to add")
 @click.option("--remove-labels", help="Comma-separated labels to remove")
 @click.pass_context
-def edit_cmd(ctx, issue_key, assignee, priority, summary, labels, add_labels, remove_labels):
+def edit_cmd(ctx, issue_key, assignee, priority, summary, parent_key, labels, add_labels, remove_labels):
     """Update fields on a Jira issue."""
     fields: dict = {}
     update: dict = {}
@@ -76,6 +77,8 @@ def edit_cmd(ctx, issue_key, assignee, priority, summary, labels, add_labels, re
         fields["priority"] = {"name": priority}
     if summary:
         fields["summary"] = summary
+    if parent_key:
+        fields["parent"] = None if parent_key.lower() == "none" else {"key": parent_key}
     if labels:
         fields["labels"] = [l.strip() for l in labels.split(",")]
     if add_labels:

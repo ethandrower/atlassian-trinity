@@ -75,3 +75,27 @@ def test_parent_combines_with_other_fields(command, recorder):
     fields = recorder.last_payload["fields"]
     assert fields["parent"] == {"key": "ECD-2341"}
     assert fields["priority"] == {"name": "High"}
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_description_omitted_by_default(command, recorder):
+    run(command, "--summary", "new title")
+    assert "description" not in recorder.last_payload["fields"]
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_description_is_wrapped_as_adf(command, recorder):
+    """Jira rejects a bare string here — the body must be an ADF document."""
+    run(command, "--description", "First line.\n\nSecond line.")
+    body = recorder.last_payload["fields"]["description"]
+    assert body["type"] == "doc"
+    assert [p["content"][0]["text"] for p in body["content"]] == ["First line.", "Second line."]
+
+
+@pytest.mark.parametrize("command", COMMANDS)
+def test_description_file_overrides_description(command, recorder, tmp_path):
+    path = tmp_path / "body.txt"
+    path.write_text("From the file.")
+    run(command, "--description", "inline", "--description-file", str(path))
+    body = recorder.last_payload["fields"]["description"]
+    assert body["content"][0]["content"][0]["text"] == "From the file."

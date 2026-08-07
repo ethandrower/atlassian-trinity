@@ -62,12 +62,21 @@ def edit_jira_issue(
 @click.option("--priority", help="Priority name (High, Medium, Low)")
 @click.option("--summary", help="New title")
 @click.option("--parent", "parent_key", help="Reparent under this issue key (use 'none' to orphan)")
+@click.option("--description", help="Replace the description (plain text)")
+@click.option(
+    "--description-file",
+    type=click.File("r"),
+    help="Read the replacement description from a file (overrides --description)",
+)
 @click.option("--labels", help="Comma-separated labels (replaces existing)")
 @click.option("--add-labels", help="Comma-separated labels to add")
 @click.option("--remove-labels", help="Comma-separated labels to remove")
 @click.pass_context
-def edit_cmd(ctx, issue_key, assignee, priority, summary, parent_key, labels, add_labels, remove_labels):
+def edit_cmd(ctx, issue_key, assignee, priority, summary, parent_key, description,
+             description_file, labels, add_labels, remove_labels):
     """Update fields on a Jira issue."""
+    from .create_issue import build_adf_body
+
     fields: dict = {}
     update: dict = {}
 
@@ -79,6 +88,10 @@ def edit_cmd(ctx, issue_key, assignee, priority, summary, parent_key, labels, ad
         fields["summary"] = summary
     if parent_key:
         fields["parent"] = None if parent_key.lower() == "none" else {"key": parent_key}
+    if description_file:
+        fields["description"] = build_adf_body(description_file.read())
+    elif description:
+        fields["description"] = build_adf_body(description)
     if labels:
         fields["labels"] = [l.strip() for l in labels.split(",")]
     if add_labels:

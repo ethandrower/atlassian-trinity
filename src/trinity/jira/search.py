@@ -9,6 +9,7 @@ import click
 import requests
 
 from ..base import get_jira_auth_headers, JIRA_BASE_URL, format_error
+from .issue_links import normalize_links
 
 
 def search_jira(
@@ -27,7 +28,7 @@ def search_jira(
         fields = [
             "summary", "status", "assignee", "priority",
             "created", "updated", "issuetype", "labels",
-            "reporter", "description", "parent",
+            "reporter", "description", "parent", "issuelinks",
         ]
 
     payload: dict = {"jql": jql, "maxResults": min(max_results, 100), "fields": fields}
@@ -70,6 +71,7 @@ def search_jira(
                     f.get("parent", {}).get("fields", {}).get("summary")
                     if f.get("parent") else None
                 ),
+                **normalize_links(f),
             })
 
         return {"total": data.get("total", 0), "count": len(issues), "issues": issues}

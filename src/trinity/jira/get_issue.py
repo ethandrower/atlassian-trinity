@@ -9,6 +9,7 @@ import click
 import requests
 
 from ..base import get_jira_auth_headers, JIRA_BASE_URL, format_error
+from .issue_links import normalize_links
 
 
 def get_jira_issue(
@@ -72,6 +73,7 @@ def get_jira_issue(
             "sprint": _extract_sprint_info(f),
             "epic_key": f.get("parent", {}).get("key") if f.get("parent") else None,
             "story_points": f.get("customfield_10016"),
+            **normalize_links(f),
         }
 
         if include_comments:

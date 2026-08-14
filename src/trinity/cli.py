@@ -354,25 +354,13 @@ def bb_group(ctx, workspace, repo):
 
 
 def _bb_context(ctx) -> tuple:
-    """Resolve workspace and repo from context or git remote."""
-    workspace = ctx.obj.get("bb_workspace")
-    repo = ctx.obj.get("bb_repo")
+    """Resolve workspace and repo from flags, git remote, then config."""
+    from .base.repo_context import resolve_workspace_repo
 
-    if not workspace or not repo:
-        try:
-            from git import Repo, InvalidGitRepositoryError
-            import re
-            git_repo = Repo(search_parent_directories=True)
-            for remote in git_repo.remotes:
-                for url in [u for u in [remote.url]]:
-                    m = re.search(r"bitbucket\.org[:/]([^/]+)/([^/.]+)", url)
-                    if m:
-                        workspace = workspace or m.group(1)
-                        repo = repo or m.group(2)
-        except Exception:
-            pass
-
-    return workspace or "", repo or ""
+    return resolve_workspace_repo(
+        ctx.obj.get("bb_workspace"),
+        ctx.obj.get("bb_repo"),
+    )
 
 
 @bb_group.command("list")

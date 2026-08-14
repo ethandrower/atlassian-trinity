@@ -7,26 +7,23 @@ Priority under test (each step only fills in what's still missing):
   2. Current git remote
   3. config: bitbucket.workspace + bitbucket.default_repo
 
+Steps 2 and 3 live in trinity.base.repo_context, shared with
+cli._bb_context, so the config lookups are patched there.
+
 When require=True and resolution fails, the helper exits with code 2
 and an actionable message.
 """
 
-import os
 from types import SimpleNamespace
-from unittest.mock import patch
 
 import pytest
 
 from trinity import bb_compat
+from trinity.base import repo_context
 
 
 def _ctx(workspace=None, repo=None) -> SimpleNamespace:
     return SimpleNamespace(obj={"workspace": workspace, "repo": repo})
-
-
-def _no_git_remote():
-    """Patch git.Repo so _resolve_repo never picks up a real remote."""
-    return patch.object(bb_compat, "re", bb_compat.re)  # no-op default
 
 
 @pytest.fixture(autouse=True)
@@ -50,29 +47,29 @@ def test_flags_used_when_present(monkeypatch):
 def test_falls_back_to_config_default_repo(monkeypatch):
     monkeypatch.delenv("BITBUCKET_DEFAULT_REPO", raising=False)
     monkeypatch.setenv("BITBUCKET_WORKSPACE", "from-env-ws")
-    monkeypatch.setattr(bb_compat, "get_default_repo", lambda: "from-config-repo")
+    monkeypatch.setattr(repo_context, "get_default_repo", lambda: "from-config-repo")
     ws, repo = bb_compat._resolve_repo(_ctx())
     assert (ws, repo) == ("from-env-ws", "from-config-repo")
 
 
 def test_default_repo_with_workspace_prefix(monkeypatch):
     """default_repo can be 'ws/repo' shorthand."""
-    monkeypatch.setattr(bb_compat, "get_workspace", lambda: None)
-    monkeypatch.setattr(bb_compat, "get_default_repo", lambda: "other-ws/some-repo")
+    monkeypatch.setattr(repo_context, "get_workspace", lambda: None)
+    monkeypatch.setattr(repo_context, "get_default_repo", lambda: "other-ws/some-repo")
     ws, repo = bb_compat._resolve_repo(_ctx())
     assert (ws, repo) == ("other-ws", "some-repo")
 
 
 def test_flag_workspace_overrides_config(monkeypatch):
-    monkeypatch.setattr(bb_compat, "get_workspace", lambda: "config-ws")
-    monkeypatch.setattr(bb_compat, "get_default_repo", lambda: "config-repo")
+    monkeypatch.setattr(repo_context, "get_workspace", lambda: "config-ws")
+    monkeypatch.setattr(repo_context, "get_default_repo", lambda: "config-repo")
     ws, repo = bb_compat._resolve_repo(_ctx(workspace="flag-ws"))
     assert (ws, repo) == ("flag-ws", "config-repo")
 
 
 def test_exits_with_clear_error_when_unresolvable(monkeypatch, capsys):
-    monkeypatch.setattr(bb_compat, "get_workspace", lambda: None)
-    monkeypatch.setattr(bb_compat, "get_default_repo", lambda: None)
+    monkeypatch.setattr(repo_context, "get_workspace", lambda: None)
+    monkeypatch.setattr(repo_context, "get_default_repo", lambda: None)
     with pytest.raises(SystemExit) as excinfo:
         bb_compat._resolve_repo(_ctx())
     assert excinfo.value.code == 2
@@ -85,7 +82,7 @@ def test_exits_with_clear_error_when_unresolvable(monkeypatch, capsys):
 
 
 def test_require_false_returns_empty_strings_silently(monkeypatch):
-    monkeypatch.setattr(bb_compat, "get_workspace", lambda: None)
-    monkeypatch.setattr(bb_compat, "get_default_repo", lambda: None)
+    monkeypatch.setattr(repo_context, "get_workspace", lambda: None)
+    monkeypatch.setattr(repo_context, "get_default_repo", lambda: None)
     ws, repo = bb_compat._resolve_repo(_ctx(), require=False)
     assert (ws, repo) == ("", "")

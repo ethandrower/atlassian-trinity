@@ -13,7 +13,6 @@ Command groups:
 import functools
 import json
 import os
-import re
 import sys
 from typing import Optional
 
@@ -24,13 +23,12 @@ from rich.table import Table
 
 from .base.auth import (
     get_bitbucket_auth_headers,
-    get_default_repo,
-    get_workspace,
     is_authenticated as _is_authenticated,
     load_config,
     save_config,
 )
 from .base.exceptions import AuthenticationError
+from .base.repo_context import resolve_workspace_repo
 from .bitbucket.api import BitbucketAPI
 from .bitbucket.commands import (
     approve_pr,
@@ -75,37 +73,12 @@ def _resolve_repo(ctx, *, require: bool = True):
     naming the -R flag, BITBUCKET_DEFAULT_REPO env var, and config field
     — rather than letting the API return a misleading "Resource not found".
     """
-    workspace = ctx.obj.get("workspace")
-    repo = ctx.obj.get("repo")
-
-    # 2. Git remote
-    if not workspace or not repo:
-        try:
-            from git import Repo
-            git_repo = Repo(search_parent_directories=True)
-            for remote in git_repo.remotes:
-                m = re.search(r"bitbucket\.org[:/]([^/]+)/([^/.]+)", remote.url)
-                if m:
-                    workspace = workspace or m.group(1)
-                    repo = repo or m.group(2)
-                    break
-        except Exception:
-            pass
-
-    # 3. Config
-    if not workspace:
-        workspace = get_workspace() or ""
-    if not repo:
-        default = get_default_repo()
-        if default:
-            # Allow "workspace/repo" or bare "repo" in the config field —
-            # mirrors the shorthand accepted by the -R flag.
-            if "/" in default:
-                ws_default, _, repo_default = default.partition("/")
-                workspace = workspace or ws_default
-                repo = repo_default
-            else:
-                repo = default
+    # Steps 2 and 3 live in base.repo_context so `trinity bb` and `bb`
+    # resolve identically.
+    workspace, repo = resolve_workspace_repo(
+        ctx.obj.get("workspace"),
+        ctx.obj.get("repo"),
+    )
 
     if require and (not workspace or not repo):
         _error(

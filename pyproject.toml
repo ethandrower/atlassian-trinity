@@ -69,6 +69,12 @@ target-version = ['py39']
 profile = "black"
 
 [tool.pytest.ini_options]
+# Resolve `trinity` from this checkout's src/ rather than from whatever
+# happens to be pip-installed. Without it, an editable install pins every
+# run to the original clone, so tests in a secondary checkout silently
+# exercise the *other* tree's code -- reporting failures this branch
+# cannot fix, and hiding real ones it introduced.
+pythonpath = ["src"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

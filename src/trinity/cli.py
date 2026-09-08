@@ -16,6 +16,8 @@ import click
 from rich.console import Console
 from rich.table import Table
 
+from .base.exceptions import AuthenticationError, ConfigurationError
+
 console = Console()
 
 
@@ -874,6 +876,11 @@ def main():
         cli()
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled.[/yellow]")
+        sys.exit(1)
+    except (AuthenticationError, ConfigurationError) as e:
+        # These carry a remediation hint in their message. Letting them
+        # escape printed a ~20-line traceback that buried it.
+        console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
 

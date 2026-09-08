@@ -18,12 +18,18 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from .exceptions import AuthenticationError, ConfigurationError
 
-# Load .env from current dir or any parent
-load_dotenv()
+# Load .env from the invocation directory or any parent.
+#
+# The default search walks up from *this file's* location, which lives
+# inside the installed package -- so an installed console script never
+# saw a project's .env, despite the old comment here promising it did.
+# ~/.trinity/config.yaml stays the machine-wide source of truth; this
+# only restores per-project override for people who want it.
+load_dotenv(find_dotenv(usecwd=True))
 
 # ── Config file location ───────────────────────────────────────────────────────
 CONFIG_DIR = Path.home() / ".trinity"
@@ -205,6 +211,16 @@ def get_bitbucket_auth_headers(
             "User-Agent": "trinity-atlassian-cli/0.1.0",
         }
 
+    if repo:
+        # Name the repo. With per-repo tokens the common failure is not
+        # "no credentials at all" but "credentials for other repos, none
+        # for this one", and the generic message sends people to re-set a
+        # global token they may deliberately not want.
+        raise AuthenticationError(
+            f"No Bitbucket credentials for {repo}. Add a per-repo token:\n"
+            f"  trinity config --bb-repo-token {repo}=YOUR_TOKEN\n"
+            "(or set a workspace-wide one with: trinity config --bb-token YOUR_TOKEN)"
+        )
     raise AuthenticationError(
         "Bitbucket credentials missing. Set BITBUCKET_REPO_TOKEN "
         "(or run: trinity config --bb-token YOUR_TOKEN)"
@@ -222,13 +238,35 @@ def _bearer_headers(token: str) -> Dict[str, str]:
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def is_authenticated(service: str = "jira") -> bool:
-    """Check whether credentials for the given service are available."""
+def is_authenticated(service: str = "jira", repo: Optional[str] = None) -> bool:
+    """Check whether credentials for the given service are available.
+
+    ``repo`` is an optional "workspace/repo" slug. Pass it when the caller
+    knows which repository the command targets, so a per-repo token is
+    credited to the check.
+
+    A non-empty ``bitbucket.repo_tokens`` map counts as configured even
+    when no slug is supplied. Repository access tokens are each scoped to
+    exactly one repo, so a machine can be fully credentialed for every
+    repo it uses without ever setting the global ``repo_token``. This
+    function used to ignore the map entirely, which made the pre-flight
+    gate in the ``bb`` front-end reject every command on such a machine --
+    including commands the credential resolver would have served
+    correctly a moment later.
+    """
     try:
         if service in ("jira", "confluence"):
             get_jira_auth_headers()
         elif service == "bitbucket":
-            get_bitbucket_auth_headers()
+            try:
+                get_bitbucket_auth_headers(repo=repo)
+            except AuthenticationError:
+                # No slug-specific or global credential. Fall back to
+                # asking whether *any* per-repo token is on file.
+                bb = load_config().get("bitbucket", {})
+                repo_tokens = bb.get("repo_tokens") or {}
+                if not (isinstance(repo_tokens, dict) and repo_tokens):
+                    raise
         return True
     except AuthenticationError:
         return False

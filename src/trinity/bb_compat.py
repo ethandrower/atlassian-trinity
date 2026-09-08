@@ -645,6 +645,12 @@ def main():
     except KeyboardInterrupt:
         _error("Operation cancelled")
         sys.exit(1)
+    except AuthenticationError as e:
+        # Reached when credentials exist for *some* repo but not the one
+        # this command targets -- the pre-flight gate passes, then the
+        # per-repo resolver comes up empty. Say so instead of tracebacking.
+        _error(str(e))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

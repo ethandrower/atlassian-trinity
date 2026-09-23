@@ -286,8 +286,8 @@ def jira_issue_types(ctx, project_key):
 @click.option("--project", required=True, help="Project key (e.g. ECD)")
 @click.option("--summary", required=True, help="Issue title")
 @click.option("--type", "issue_type", default="Task",
-              type=click.Choice(["Task", "Story", "Epic", "Bug", "Sub-task"], case_sensitive=False),
-              help="Issue type (default: Task)")
+              help="Issue type as the project defines it, e.g. Task, Story, Bug, Incident, "
+                   "Hotfix (default: Task). `trinity jira issue-types <PROJECT>` lists them.")
 @click.option("--description", help="Issue description (plain text)")
 @click.option("--assignee", help="Assignee account ID")
 @click.option("--priority", type=click.Choice(["Highest", "High", "Medium", "Low", "Lowest"]),
@@ -302,8 +302,18 @@ def jira_issue_types(ctx, project_key):
 @click.pass_context
 def jira_create(ctx, project, summary, issue_type, description, assignee, priority,
                 labels, parent_key, epic_key, story_points, sprint_id, fix_version, components):
-    """Create a Jira issue (Task, Story, Epic, Bug, Sub-task)."""
-    from .jira.create_issue import create_jira_issue
+    """Create a Jira issue of any type the project defines."""
+    from .jira.create_issue import create_jira_issue, resolve_issue_type
+
+    # Refuse a silent substitution. An unmatched type otherwise falls back to
+    # the project's first type, so asking for an Incident and being handed a
+    # Task would look like success and the caller would never know.
+    resolved, available = resolve_issue_type(issue_type, project)
+    if available and resolved.lower() != issue_type.lower():
+        raise click.ClickException(
+            f"{project} has no issue type {issue_type!r}. Available: {', '.join(available)}"
+        )
+
     result = create_jira_issue(
         project_key=project,
         summary=summary,

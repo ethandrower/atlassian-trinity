@@ -68,3 +68,17 @@ def test_without_trinity_home_project_dotenv_still_loads(monkeypatch, tmp_path):
     import os
     assert os.environ.get("BITBUCKET_REPO_TOKEN") == "from-project-dotenv"
     monkeypatch.delenv("BITBUCKET_REPO_TOKEN", raising=False)
+
+
+def test_client_module_also_skips_dotenv_under_trinity_home(monkeypatch, tmp_path):
+    """client.py loads .env too; called from a script in a repo with a .env it must not."""
+    from trinity.base import client
+    (tmp_path / ".env").write_text("BITBUCKET_REPO_TOKEN=from-project-dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BITBUCKET_REPO_TOKEN", raising=False)
+    monkeypatch.setenv("TRINITY_HOME", str(tmp_path / "agent"))
+    importlib.reload(client)
+    import os
+    assert os.environ.get("BITBUCKET_REPO_TOKEN") is None
+    monkeypatch.delenv("TRINITY_HOME", raising=False)
+    importlib.reload(client)

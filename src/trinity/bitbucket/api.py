@@ -264,12 +264,13 @@ class BitbucketAPI:
 
     def get_diff(self, workspace: str, repo: str, pr_id: int) -> str:
         url = f"{self.base_url}/repositories/{workspace}/{repo}/pullrequests/{pr_id}/diff"
-        headers = self._headers()
+        # Builds its own request, so pass the slug or per-repo tokens are never used.
+        headers = self._headers(repo=f"{workspace}/{repo}")
         headers["Accept"] = "text/plain"
         response = self.session.get(url, headers=headers, timeout=self.timeout)
         if response.status_code == 200:
             return response.text
-        self._handle_response(response)
+        self._handle_response(response, repo=f"{workspace}/{repo}")
         return ""
 
     def get_diffstat(self, workspace: str, repo: str, pr_id: int) -> Dict[str, Any]:

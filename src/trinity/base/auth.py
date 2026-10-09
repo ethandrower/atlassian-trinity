@@ -32,7 +32,10 @@ from .exceptions import AuthenticationError, ConfigurationError
 load_dotenv(find_dotenv(usecwd=True))
 
 # ── Config file location ───────────────────────────────────────────────────────
-CONFIG_DIR = Path.home() / ".trinity"
+# TRINITY_HOME points one process tree at a different identity's config (e.g. a
+# bot user's ~/.trinity-agent) without touching the machine-wide ~/.trinity or
+# setting per-credential env vars that leak into everything else.
+CONFIG_DIR = Path(os.environ.get("TRINITY_HOME") or Path.home() / ".trinity").expanduser()
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 DEFAULT_CONFIG: Dict[str, Any] = {

@@ -48,3 +48,23 @@ def teardown_module():
     import os
     os.environ.pop("TRINITY_HOME", None)
     importlib.reload(auth)
+
+
+def test_trinity_home_ignores_project_dotenv(monkeypatch, tmp_path):
+    """A project .env must not override the identity TRINITY_HOME selects."""
+    (tmp_path / ".env").write_text("BITBUCKET_REPO_TOKEN=from-project-dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BITBUCKET_REPO_TOKEN", raising=False)
+    _reload(monkeypatch, str(tmp_path / "agent"))
+    import os
+    assert os.environ.get("BITBUCKET_REPO_TOKEN") is None
+
+
+def test_without_trinity_home_project_dotenv_still_loads(monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text("BITBUCKET_REPO_TOKEN=from-project-dotenv\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("BITBUCKET_REPO_TOKEN", raising=False)
+    _reload(monkeypatch, None)
+    import os
+    assert os.environ.get("BITBUCKET_REPO_TOKEN") == "from-project-dotenv"
+    monkeypatch.delenv("BITBUCKET_REPO_TOKEN", raising=False)

@@ -29,10 +29,18 @@ from .exceptions import AuthenticationError, ConfigurationError
 # saw a project's .env, despite the old comment here promising it did.
 # ~/.trinity/config.yaml stays the machine-wide source of truth; this
 # only restores per-project override for people who want it.
-load_dotenv(find_dotenv(usecwd=True))
+#
+# Skipped under TRINITY_HOME: that means "act as exactly this identity", and a
+# project .env (citemed_web's carries a BITBUCKET_REPO_TOKEN) would otherwise
+# outrank the identity's own config and silently swap who trinity acts as.
+if not os.environ.get("TRINITY_HOME"):
+    load_dotenv(find_dotenv(usecwd=True))
 
 # ── Config file location ───────────────────────────────────────────────────────
-CONFIG_DIR = Path.home() / ".trinity"
+# TRINITY_HOME points one process tree at a different identity's config (e.g. a
+# bot user's ~/.trinity-agent) without touching the machine-wide ~/.trinity or
+# setting per-credential env vars that leak into everything else.
+CONFIG_DIR = Path(os.environ.get("TRINITY_HOME") or Path.home() / ".trinity").expanduser()
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 DEFAULT_CONFIG: Dict[str, Any] = {

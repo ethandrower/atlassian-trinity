@@ -61,6 +61,15 @@ def resolve_issue_type(requested: str, project_key: str) -> tuple[str, list[str]
     return default, names
 
 
+TEAM_FIELD = "customfield_10001"
+
+
+def default_team(project_key: str) -> Optional[str]:
+    """The project's default Team id from config (jira.default_team), if any."""
+    from ..base.auth import load_config
+    return ((load_config().get("jira") or {}).get("default_team") or {}).get(project_key)
+
+
 def create_jira_issue(
     project_key: str,
     summary: str,
@@ -75,6 +84,8 @@ def create_jira_issue(
     sprint_id: Optional[int] = None,
     fix_version: Optional[str] = None,
     components: Optional[list[str]] = None,
+    team_id: Optional[str] = None,
+    use_default_team: bool = True,
 ) -> dict:
     """
     Create a Jira issue.
@@ -96,6 +107,9 @@ def create_jira_issue(
         sprint_id:    Sprint ID to add the issue to (customfield_10020)
         fix_version:  Fix version name
         components:   List of component names
+        team_id:      Atlassian Team id for the Team field (customfield_10001).
+                      When None and use_default_team, the project's
+                      jira.default_team from config is used.
     """
     # Resolve issue type against what the project actually supports
     resolved_type, available_types = resolve_issue_type(issue_type, project_key)
@@ -138,6 +152,10 @@ def create_jira_issue(
 
     if sprint_id is not None:
         fields["customfield_10020"] = {"id": sprint_id}
+
+    team = team_id if team_id is not None else (default_team(project_key) if use_default_team else None)
+    if team:
+        fields[TEAM_FIELD] = team
 
     try:
         response = requests.post(

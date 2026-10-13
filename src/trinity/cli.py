@@ -129,8 +129,9 @@ def jira_transition(ctx, issue_key, transition_name, transition_id, comment):
 @click.option("--labels", help="Comma-separated labels (replaces)")
 @click.option("--add-labels", help="Labels to add")
 @click.option("--remove-labels", help="Labels to remove")
+@click.option("--team", "team_id", help="Team id for the Team field ('none' clears it)")
 @click.pass_context
-def jira_edit(ctx, issue_key, assignee, priority, summary, labels, add_labels, remove_labels):
+def jira_edit(ctx, issue_key, assignee, priority, summary, labels, add_labels, remove_labels, team_id):
     """Update fields on a Jira issue."""
     from .jira.edit_issue import edit_jira_issue
     fields: dict = {}
@@ -147,6 +148,9 @@ def jira_edit(ctx, issue_key, assignee, priority, summary, labels, add_labels, r
         update["labels"] = [{"add": l.strip()} for l in add_labels.split(",")]
     if remove_labels:
         update.setdefault("labels", []).extend([{"remove": l.strip()} for l in remove_labels.split(",")])
+    if team_id:
+        from .jira.create_issue import TEAM_FIELD
+        fields[TEAM_FIELD] = None if team_id.lower() == "none" else team_id
     if not fields and not update:
         raise click.UsageError("Provide at least one field to update")
     result = edit_jira_issue(issue_key, fields or None, update or None)
@@ -299,9 +303,12 @@ def jira_issue_types(ctx, project_key):
 @click.option("--sprint", "sprint_id", type=int, help="Sprint ID to add the issue to")
 @click.option("--fix-version", help="Fix version name")
 @click.option("--components", help="Comma-separated component names")
+@click.option("--team", "team_id", help="Team id (default: the project's jira.default_team from config)")
+@click.option("--no-team", is_flag=True, help="Don't set the project's default Team")
 @click.pass_context
 def jira_create(ctx, project, summary, issue_type, description, assignee, priority,
-                labels, parent_key, epic_key, story_points, sprint_id, fix_version, components):
+                labels, parent_key, epic_key, story_points, sprint_id, fix_version, components,
+                team_id, no_team):
     """Create a Jira issue (Task, Story, Epic, Bug, Sub-task)."""
     from .jira.create_issue import create_jira_issue
     result = create_jira_issue(
@@ -318,6 +325,8 @@ def jira_create(ctx, project, summary, issue_type, description, assignee, priori
         sprint_id=sprint_id,
         fix_version=fix_version,
         components=components.split(",") if components else None,
+        team_id=team_id,
+        use_default_team=not no_team,
     )
     click.echo(json.dumps(result, indent=2))
     if result.get("error"):

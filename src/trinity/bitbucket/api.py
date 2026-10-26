@@ -19,6 +19,7 @@ from ..base.exceptions import (
 )
 
 BITBUCKET_BASE_URL = "https://api.bitbucket.org/2.0"
+PR_MAX_PAGELEN = 50
 
 # Pulls the workspace/repo slug out of any /repositories/{ws}/{repo}/...
 # endpoint so we can route to a per-repo token without making every call
@@ -117,11 +118,13 @@ class BitbucketAPI:
     def delete(self, endpoint: str) -> Any:
         return self._request("DELETE", endpoint)
 
-    def get_all_pages(self, endpoint: str, params: Optional[Dict] = None) -> List[Any]:
+    def get_all_pages(
+        self, endpoint: str, params: Optional[Dict] = None, max_items: Optional[int] = None
+    ) -> List[Any]:
         results = []
         url = endpoint
         first = True
-        while url:
+        while url and (max_items is None or len(results) < max_items):
             if first:
                 data = self.get(url, params)
                 first = False
@@ -132,7 +135,7 @@ class BitbucketAPI:
             url = data.get("next")
             if url:
                 time.sleep(0.1)
-        return results
+        return results if max_items is None else results[:max_items]
 
     def get_paginated(self, endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
         response = self.get(endpoint, params)
@@ -171,8 +174,10 @@ class BitbucketAPI:
         params: dict = {}
         if kwargs.get("state"):
             params["state"] = kwargs["state"]
-        if kwargs.get("limit"):
-            params["pagelen"] = kwargs["limit"]
+        limit = kwargs.get("limit")
+        if limit:
+            # Bitbucket rejects pagelen > 50 for pull requests ("Invalid pagelen").
+            params["pagelen"] = min(limit, PR_MAX_PAGELEN)
 
         query_parts = []
         if kwargs.get("author"):
@@ -184,6 +189,10 @@ class BitbucketAPI:
 
         if kwargs.get("fetch_all"):
             return self.get_all_pages(f"/repositories/{workspace}/{repo}/pullrequests", params)
+        if limit and limit > PR_MAX_PAGELEN:
+            return self.get_all_pages(
+                f"/repositories/{workspace}/{repo}/pullrequests", params, max_items=limit
+            )
         return self.get_paginated(f"/repositories/{workspace}/{repo}/pullrequests", params)["values"]
 
     def update_pull_request(self, workspace: str, repo: str, pr_id: int, **kwargs) -> Dict[str, Any]:
@@ -319,7 +328,10 @@ class BitbucketAPI:
         encoded_step = quote(step_uuid, safe="")
         endpoint = f"/repositories/{workspace}/{repo}/pipelines/{encoded_pipeline}/steps/{encoded_step}/log"
         url = f"{self.base_url}{endpoint}"
-        headers = self._headers()
+        # This bypasses _request, so pass the slug ourselves or per-repo tokens
+        # are skipped and the request goes out with no credentials (401).
+        slug = f"{workspace}/{repo}"
+        headers = self._headers(repo=slug)
         headers.pop("Content-Type", None)
         headers["Accept"] = "*/*"
         response = self.session.get(url, headers=headers, timeout=self.timeout, allow_redirects=False)
@@ -332,5 +344,5 @@ class BitbucketAPI:
         elif response.status_code in (404, 406):
             return ""
         else:
-            self._handle_response(response)
+            self._handle_response(response, repo=slug)
             return ""

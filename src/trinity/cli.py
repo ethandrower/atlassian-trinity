@@ -159,6 +159,36 @@ def jira_edit(ctx, issue_key, assignee, priority, summary, labels, add_labels, r
         sys.exit(1)
 
 
+@jira_group.command("link")
+@click.argument("source")
+@click.argument("relation")
+@click.argument("target")
+@click.option("--comment", help="Comment to add alongside the link")
+@click.pass_context
+def jira_link(ctx, source, relation, target, comment):
+    """Link two issues: SOURCE RELATION TARGET, e.g. ECD-1 duplicates ECD-2.
+
+    RELATION is a link phrase in either direction ("blocks", "is blocked by",
+    "duplicates", "relates to") or a type name. See `trinity jira link-types`.
+    """
+    from .jira.link_issues import link_jira_issues
+    result = link_jira_issues(source, relation, target, comment=comment)
+    click.echo(json.dumps(result, indent=2))
+    if result.get("error"):
+        sys.exit(1)
+
+
+@jira_group.command("link-types")
+@click.pass_context
+def jira_link_types(ctx):
+    """List the issue link types and their phrases."""
+    from .jira.link_issues import get_link_types
+    result = get_link_types()
+    click.echo(json.dumps(result, indent=2))
+    if result.get("error"):
+        sys.exit(1)
+
+
 @jira_group.command("transitions")
 @click.argument("issue_key")
 @click.pass_context

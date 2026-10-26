@@ -218,6 +218,22 @@ trinity jira edit ECD-1448 --add-labels "urgent" --remove-labels "draft"
 
 Options: `--summary TEXT`, `--priority TEXT`, `--assignee ACCOUNT_ID`, `--labels TEXT` (replaces all), `--add-labels TEXT`, `--remove-labels TEXT`
 
+### `link <source> <relation> <target>`
+
+Link two issues so the sentence reads true in Jira. The relation is a link phrase in either direction, or a type name.
+
+```bash
+trinity jira link ECD-2663 duplicates ECD-2581
+trinity jira link ECD-1448 "is blocked by" ECD-1400
+trinity jira link ECD-1448 "relates to" ECD-1500 --comment "Same root cause."
+```
+
+Options: `--comment TEXT`
+
+### `link-types`
+
+List the link types and their phrases (`blocks` / `is blocked by`, `duplicates` / `is duplicated by`, …).
+
 ### `status-history <issue-key>`
 
 Time-in-status analysis. Shows how long the issue has been in its current status, with optional full transition history.

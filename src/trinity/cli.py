@@ -770,16 +770,15 @@ def confluence_comment(ctx, page_id, text):
 @confluence_group.command("attach")
 @click.argument("page_id")
 @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False))
-@click.option("--comment", help="Attachment version comment")
 @click.pass_context
-def confluence_attach(ctx, page_id, files, comment):
+def confluence_attach(ctx, page_id, files):
     """Attach files (e.g. screenshots) to a Confluence page.
 
     Prints, per file, the storage-format markup that embeds it in the page body.
     Re-attaching the same filename adds a new version.
     """
     from .confluence.attach_files import attach_confluence_files
-    result = attach_confluence_files(page_id, list(files), comment=comment)
+    result = attach_confluence_files(page_id, list(files))
     click.echo(json.dumps(result, indent=2))
     if result.get("error"):
         sys.exit(1)

@@ -8,14 +8,14 @@ guide's screenshots can be refreshed in place.
 
 import mimetypes
 import os
-from typing import List, Optional
+from typing import List
 
 import requests
 
 from ..base import CONFLUENCE_BASE_URL, format_error, get_confluence_auth_headers
 
 
-def attach_confluence_files(page_id: str, paths: List[str], comment: Optional[str] = None) -> dict:
+def attach_confluence_files(page_id: str, paths: List[str]) -> dict:
     """Upload each file to the page. Returns {"success", "page_id", "attachments": [...]}.
 
     Each attachment entry carries the storage-format markup to embed it:
@@ -30,14 +30,14 @@ def attach_confluence_files(page_id: str, paths: List[str], comment: Optional[st
         name = os.path.basename(path)
         mime = mimetypes.guess_type(name)[0] or "application/octet-stream"
         with open(path, "rb") as fh:
-            data = {"minorEdit": "true"}
-            if comment:
-                data["comment"] = comment
+            # No version comment: on this endpoint Confluence rejects one with
+            # "Must be same number of attachment files and comments" (verified 2026-10-26).
+            parts = [("file", (name, fh, mime)), ("minorEdit", (None, "true"))]
             try:
                 # PUT creates the attachment, or a new version when the name already exists.
                 response = requests.put(
                     f"{CONFLUENCE_BASE_URL}/wiki/rest/api/content/{page_id}/child/attachment",
-                    headers=headers, files={"file": (name, fh, mime)}, data=data, timeout=120)
+                    headers=headers, files=parts, timeout=120)
             except requests.exceptions.RequestException as exc:
                 return {"error": True, "message": f"Upload failed for {name}: {exc}"}
         if response.status_code not in (200, 201):

@@ -50,6 +50,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "cloud_id": None,
         "jira_url": None,
     },
+    "jira": {
+        # Team (customfield_10001) set on every issue `jira create` makes in that
+        # project unless --team / --no-team says otherwise, keyed by project key:
+        # {"ECD": "<atlassian team id>"}. Agents create most tickets, and a ticket
+        # with no Team drops off the team's boards and reports.
+        "default_team": {},
+    },
     "bitbucket": {
         "repo_token": None,
         "username": None,

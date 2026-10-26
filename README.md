@@ -515,6 +515,7 @@ Add a footer comment to a Confluence page.
 
 ```bash
 trinity confluence comment 123456789 "Reviewed and approved for production."
+trinity confluence attach <page-id> shot1.png shot2.jpg   # upload files; prints the markup to embed each
 ```
 
 ---

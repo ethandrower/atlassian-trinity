@@ -27,7 +27,10 @@ from .exceptions import (
     RateLimitError,
 )
 
-load_dotenv()
+# Skipped under TRINITY_HOME, like auth.py: that selects one identity exactly, and
+# a project .env (citemed_web's has a BITBUCKET_REPO_TOKEN) would override it.
+if not os.environ.get("TRINITY_HOME"):
+    load_dotenv()
 
 # ── URL constants ──────────────────────────────────────────────────────────────
 #

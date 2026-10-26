@@ -18,6 +18,20 @@ def test_step_log_sends_the_per_repo_token(monkeypatch):
     assert seen["repo"] == "citemed/citemed_web"
 
 
+def test_diff_sends_the_per_repo_token(monkeypatch):
+    """get_diff builds its own request too; without the slug it fell back to the
+    global token and failed for anyone credentialed with per-repo tokens."""
+    api = BitbucketAPI()
+    seen = {}
+    monkeypatch.setattr(api, "_headers", lambda repo=None: seen.setdefault("repo", repo) and {} or {})
+    monkeypatch.setattr(
+        api.session, "get",
+        lambda url, **kw: SimpleNamespace(status_code=200, text="diff --git a b", headers={}),
+    )
+    assert api.get_diff("citemed", "citemed_web", 1) == "diff --git a b"
+    assert seen["repo"] == "citemed/citemed_web"
+
+
 def _fake_pages(api, monkeypatch, total):
     calls = []
 

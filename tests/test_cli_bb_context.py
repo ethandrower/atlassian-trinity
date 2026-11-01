@@ -28,6 +28,7 @@ import pytest
 
 from trinity import cli
 from trinity.base import repo_context
+from trinity.base.exceptions import ConfigurationError
 
 
 def _ctx(workspace=None, repo=None) -> SimpleNamespace:
@@ -92,12 +93,20 @@ def test_repo_falls_back_to_config_default_repo(monkeypatch):
     assert (ws, repo) == ("citemed", "citemed_web")
 
 
-def test_unresolvable_returns_empty_strings(monkeypatch):
-    """_bb_context reports rather than raises; callers decide."""
-    monkeypatch.setattr(repo_context, "get_workspace", lambda: None)
+def test_no_repo_names_the_flag_and_the_configured_repos(monkeypatch):
+    """An empty repo used to reach Bitbucket and come back as a token error."""
+    monkeypatch.setattr(repo_context, "get_workspace", lambda: "citemed")
     monkeypatch.setattr(repo_context, "get_default_repo", lambda: None)
+    monkeypatch.setattr(
+        "trinity.base.auth.load_config",
+        lambda: {"bitbucket": {"repo_tokens": {"citemed/citemed_web": "x"}}},
+    )
 
-    assert cli._bb_context(_ctx()) == ("", "")
+    with pytest.raises(ConfigurationError) as e:
+        cli._bb_context(_ctx())
+
+    assert "-r" in str(e.value)
+    assert "citemed/citemed_web" in str(e.value)
 
 
 def test_git_remote_still_wins_over_config(monkeypatch):

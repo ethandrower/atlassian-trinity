@@ -40,6 +40,12 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "bb_auth: requires Bitbucket credentials")
 
 
+@pytest.fixture(autouse=True)
+def _no_login_check(monkeypatch):
+    """CLI tests stub the API, so they shouldn't call Jira to check the login."""
+    monkeypatch.setattr("trinity.base.health.require_atlassian_login", lambda: None)
+
+
 @pytest.fixture(scope="session")
 def known_issue_key() -> str:
     """A stable Jira issue key for read-only checks. Override via env."""

@@ -8,7 +8,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from ..base.auth import get_bitbucket_auth_headers, get_workspace
+from ..base.auth import get_bitbucket_auth_headers, get_workspace, load_config
 from ..base.exceptions import (
     AtlassianAPIError,
     AuthenticationError,
@@ -30,6 +30,23 @@ _REPO_SLUG_RE = re.compile(r"^/repositories/([^/]+)/([^/]+)")
 def _slug_from_endpoint(endpoint: str) -> Optional[str]:
     m = _REPO_SLUG_RE.match(endpoint)
     return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def _rejected_token_message(repo: Optional[str]) -> str:
+    """Say which token Bitbucket rejected and what to do about it."""
+    if not repo:
+        return "Bitbucket rejected the token. Run: trinity doctor"
+    known = (load_config().get("bitbucket") or {}).get("repo_tokens") or {}
+    if repo in known:
+        return (
+            f"Bitbucket rejected the token for {repo}. It has probably expired or "
+            f"been revoked. Replace it: trinity config --bb-repo-token {repo}=NEW_TOKEN"
+        )
+    return (
+        f"Bitbucket rejected the fallback token for {repo}, which has no token of "
+        f"its own. Configured repos: {', '.join(sorted(known)) or 'none'}. "
+        f"Check the repo name, or add one: trinity config --bb-repo-token {repo}=TOKEN"
+    )
 
 
 class BitbucketAPI:
@@ -63,7 +80,7 @@ class BitbucketAPI:
         if response.status_code == 204:
             return {}
         if response.status_code == 401:
-            raise AuthenticationError("Authentication failed. Check BITBUCKET_REPO_TOKEN.")
+            raise AuthenticationError(_rejected_token_message(repo))
         if response.status_code == 403:
             raise PermissionError("Insufficient permissions.")
         if response.status_code == 404:

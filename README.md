@@ -2,7 +2,7 @@
 
 **Unified Atlassian CLI for Jira, Confluence, and Bitbucket.**
 
-Trinity is a pip-installable command-line tool that wraps the Jira, Confluence, and Bitbucket Cloud REST APIs into a single, consistent interface. It runs in human-readable Rich terminal output by default and switches to clean, structured JSON with `--json` — making it equally at home in a developer's terminal or an agent's subprocess call.
+Trinity is a pip-installable command-line tool that wraps the Jira, Confluence, and Bitbucket Cloud REST APIs into a single, consistent interface. It prints readable tables in a terminal and clean, structured JSON when piped — making it equally at home in a developer's terminal or an agent's subprocess call.
 
 Sister project to [Morpheus](https://github.com/ethandrower/morpheus), an autonomous project management agent.
 
@@ -100,13 +100,20 @@ trinity confluence search "deployment runbook"
 
 ## Global Flags
 
-These flags must appear **before** the subcommand:
-
 | Flag | Description |
 |------|-------------|
-| `--json` | Machine-readable JSON output. Must precede the subcommand: `trinity --json jira search "..."` |
-| `--no-color` | Disable Rich terminal colors |
+| `--json` | Force JSON output. Works anywhere on the line. This is already the default when output is piped. |
+| `--table` | Force table output, even when piped. Works anywhere on the line. |
+| `--no-color` | Disable Rich terminal colors. Goes before the subcommand. |
 | `--version` | Show version and exit |
+
+`-r` and `-w` on `trinity bb` go before the subcommand: `trinity bb -r my-repo list`.
+
+## Something Not Working?
+
+Run `trinity doctor`. It checks the Jira and Confluence login and every Bitbucket repo token, says what is wrong, and exits non-zero if anything fails.
+
+Jira treats a rejected login as an anonymous visitor, which makes tickets look missing and searches look empty. Every `trinity jira` and `trinity confluence` command therefore asks Jira who it is signed in as before it runs, and stops with a login error if Jira answers 401.
 
 ---
 
@@ -538,12 +545,13 @@ trinity confluence attach <page-id> shot1.png shot2.jpg   # upload files; prints
 
 ## Agent Integration
 
-Trinity is designed to be called from agent subprocess loops. The `--json` flag produces consistent, machine-readable output for every command.
+Trinity is designed to be called from agent subprocess loops. Output is JSON whenever it is piped, so agents don't need a flag.
 
 ### Key Design Points
 
-- `--json` must come **before** the subcommand: `trinity --json jira search "..."`
-- Every command returns `{"error": true, "status_code": N, "message": "..."}` on failure
+- `--json` is optional when piped, and works anywhere on the line
+- Every command returns `{"error": true, "message": "..."}` on failure. API errors add `status_code`; errors raised by Trinity itself add `error_type`
+- Start with `trinity doctor` when a command fails or returns less than expected
 - Exit code is non-zero on any error — agents can check `returncode` without parsing JSON
 - All timestamps are ISO 8601 strings
 - Unassigned issues return `"assignee": "Unassigned"` (never `null`) in search results

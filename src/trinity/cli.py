@@ -16,22 +16,74 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from .base.exceptions import AuthenticationError, ConfigurationError
+from .base.exceptions import ConfigurationError, TrinityError
 
 console = Console()
 
 
+def _wants_json(explicit: Optional[bool] = None) -> bool:
+    """JSON unless asked otherwise or a person is reading a terminal.
+
+    Agents and scripts read Trinity through a pipe. Tables cut off long titles
+    there, and nothing can parse them.
+    """
+    if explicit is not None:
+        return explicit
+    return not sys.stdout.isatty()
+
+
+class RootGroup(click.Group):
+    """Accept --json / --table anywhere, not only before the subcommand."""
+
+    def parse_args(self, ctx, args):
+        end = args.index("--") if "--" in args else len(args)
+        flags = [a for a in args[:end] if a in ("--json", "--table")]
+        rest = [a for a in args[:end] if a not in ("--json", "--table")]
+        return super().parse_args(ctx, flags + rest + args[end:])
+
+
+class LoginCheckedCommand(click.Command):
+    """Confirm the Atlassian login works before running the command.
+
+    Jira treats a rejected login as an anonymous visitor, so without this a bad
+    token reads as "that issue does not exist" or as an empty search. Runs here
+    rather than in the group callback so --help and usage errors stay offline.
+    """
+
+    def invoke(self, ctx):
+        from .base.health import require_atlassian_login
+        require_atlassian_login()
+        return super().invoke(ctx)
+
+
+class AtlassianGroup(click.Group):
+    command_class = LoginCheckedCommand
+
+
 # ── Root group ─────────────────────────────────────────────────────────────────
 
-@click.group()
+@click.group(cls=RootGroup, epilog="""\b
+Start here:
+  trinity doctor                  Check every login and repo token
+  trinity jira show PROJ-123      Read a ticket
+  trinity bb -r my-repo list      List open pull requests
+
+\b
+Output is JSON when piped and a table in a terminal. --json or --table forces it.
+Every error exits non-zero. JSON errors look like {"error": true, "message": "..."}.
+Each command has examples, e.g. trinity jira search --help
+Full docs: README.md and docs/ at https://github.com/ethandrower/atlassian-trinity
+""")
 @click.version_option(package_name="trinity-atlassian-cli")
-@click.option("--json", "output_json", is_flag=True, help="JSON output (default for agent use)")
+@click.option("--json/--table", "output_json", default=None,
+              help="Force JSON or table output, anywhere on the line. "
+                   "Default: JSON when piped, table in a terminal.")
 @click.option("--no-color", is_flag=True, help="Disable color output")
 @click.pass_context
 def cli(ctx, output_json, no_color):
     """Trinity — Unified Atlassian CLI for Jira, Confluence, and Bitbucket."""
     ctx.ensure_object(dict)
-    ctx.obj["output_json"] = output_json
+    ctx.obj["output_json"] = _wants_json(output_json)
     ctx.obj["no_color"] = no_color
     if no_color:
         os.environ["NO_COLOR"] = "1"
@@ -39,7 +91,7 @@ def cli(ctx, output_json, no_color):
 
 # ── Jira subgroup ──────────────────────────────────────────────────────────────
 
-@cli.group("jira")
+@cli.group("jira", cls=AtlassianGroup)
 @click.pass_context
 def jira_group(ctx):
     """Jira Cloud commands."""
@@ -52,7 +104,13 @@ def jira_group(ctx):
 @click.option("--fields", help="Comma-separated field list")
 @click.pass_context
 def jira_search(ctx, jql, max_results, fields):
-    """Search Jira issues using JQL."""
+    """Search Jira issues using JQL.
+
+    \b
+    Examples:
+      trinity jira search "project = PROJ AND status = 'In Progress'"
+      trinity jira search "assignee = currentUser()" --max-results 10 --fields summary,status
+    """
     from .jira.search import search_jira
     field_list = fields.split(",") if fields else None
     result = search_jira(jql, max_results, field_list)
@@ -81,7 +139,13 @@ def jira_search(ctx, jql, max_results, fields):
 @click.option("--comments", "include_comments", is_flag=True)
 @click.pass_context
 def jira_show(ctx, issue_key, include_comments):
-    """Show full details of a Jira issue."""
+    """Show full details of a Jira issue.
+
+    \b
+    Examples:
+      trinity jira show PROJ-123
+      trinity jira show PROJ-123 --comments
+    """
     from .jira.get_issue import get_jira_issue
     result = get_jira_issue(issue_key, include_comments=include_comments)
     click.echo(json.dumps(result, indent=2))
@@ -95,7 +159,12 @@ def jira_show(ctx, issue_key, include_comments):
 @click.option("--mention", nargs=2, multiple=True, metavar="ACCOUNT_ID NAME")
 @click.pass_context
 def jira_comment(ctx, issue_key, text, mention):
-    """Add a comment to a Jira issue."""
+    """Add a comment to a Jira issue.
+
+    \b
+    Examples:
+      trinity jira comment PROJ-123 "Ready for QA"
+    """
     from .jira.add_comment import add_jira_comment
     mentions = [{"id": m[0], "name": m[1]} for m in mention] if mention else None
     result = add_jira_comment(issue_key, text, mentions)
@@ -395,10 +464,14 @@ def jira_release_issues(ctx, project, days, fix_version, current_sprint):
 
 @cli.group("bb")
 @click.option("--workspace", "-w", help="Override workspace")
-@click.option("--repo", "-r", help="Override repo name")
+@click.option("--repo", "-r", help="Repo name. Goes before the subcommand: trinity bb -r my-repo list")
 @click.pass_context
 def bb_group(ctx, workspace, repo):
-    """Bitbucket Cloud commands."""
+    """Bitbucket Cloud commands.
+
+    The repo comes from -r, then the git remote of the current directory, then
+    bitbucket.default_repo in the config.
+    """
     ctx.ensure_object(dict)
     ctx.obj["bb_workspace"] = workspace or os.getenv("BITBUCKET_WORKSPACE", "")
     ctx.obj["bb_repo"] = repo
@@ -406,12 +479,23 @@ def bb_group(ctx, workspace, repo):
 
 def _bb_context(ctx) -> tuple:
     """Resolve workspace and repo from flags, git remote, then config."""
+    from .base.auth import load_config
     from .base.repo_context import resolve_workspace_repo
 
-    return resolve_workspace_repo(
+    workspace, repo = resolve_workspace_repo(
         ctx.obj.get("bb_workspace"),
         ctx.obj.get("bb_repo"),
     )
+    if not repo:
+        # Without this the URL has an empty repo, no per-repo token matches, and
+        # Bitbucket's 401 reads as a bad token rather than a missing repo name.
+        known = sorted((load_config().get("bitbucket") or {}).get("repo_tokens") or {})
+        raise ConfigurationError(
+            "No Bitbucket repo given, and none could be worked out from this directory. "
+            "Pass -r before the subcommand: trinity bb -r REPO list"
+            + (f". Configured repos: {', '.join(known)}" if known else "")
+        )
+    return workspace, repo
 
 
 @bb_group.command("list")
@@ -421,7 +505,13 @@ def _bb_context(ctx) -> tuple:
 @click.option("--all", "fetch_all", is_flag=True)
 @click.pass_context
 def bb_list(ctx, state, author, limit, fetch_all):
-    """List pull requests."""
+    """List pull requests.
+
+    \b
+    Examples:
+      trinity bb -r my-repo list
+      trinity bb -r my-repo list --state MERGED --limit 10
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import list_prs
     api = BitbucketAPI()
@@ -454,7 +544,12 @@ def bb_list(ctx, state, author, limit, fetch_all):
 @click.option("--comments", "include_comments", is_flag=True)
 @click.pass_context
 def bb_show(ctx, pr_id, include_comments):
-    """Show pull request details."""
+    """Show pull request details.
+
+    \b
+    Examples:
+      trinity bb -r my-repo show 42 --comments
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import show_pr
     api = BitbucketAPI()
@@ -471,7 +566,13 @@ def bb_show(ctx, pr_id, include_comments):
 @click.option("--reply-to", type=int, help="Reply to comment ID")
 @click.pass_context
 def bb_comment(ctx, pr_id, message, file, line, reply_to):
-    """Add a comment to a pull request."""
+    """Add a comment to a pull request.
+
+    \b
+    Examples:
+      trinity bb -r my-repo comment 42 -m "Looks good"
+      trinity bb -r my-repo comment 42 -m "Null check?" --file src/app.py --line 10
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import comment_pr
     api = BitbucketAPI()
@@ -485,7 +586,12 @@ def bb_comment(ctx, pr_id, message, file, line, reply_to):
 @click.option("--stat", is_flag=True, help="Show diffstat instead of full diff")
 @click.pass_context
 def bb_diff(ctx, pr_id, stat):
-    """Show PR diff or diffstat."""
+    """Show PR diff or diffstat.
+
+    \b
+    Examples:
+      trinity bb -r my-repo diff 42 --stat
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import diff_pr
     api = BitbucketAPI()
@@ -525,7 +631,12 @@ def bb_activity(ctx, pr_id, limit):
 @click.pass_context
 def bb_create(ctx, title, description, description_file, source, dest, reviewers,
               close_branch, draft, web):
-    """Create a pull request."""
+    """Create a pull request.
+
+    \b
+    Examples:
+      trinity bb -r my-repo create -t "Fix login" --description-file body.md -s my-branch --dest main --draft
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import create_pr
     if description_file:
@@ -644,18 +755,24 @@ def bb_run_pipeline(ctx, pattern, branch):
         workspace, repo, branch, pattern=None if pattern == "default" else pattern
     )
     build = result.get("build_number")
-    uuid = result.get("uuid", "")
-    console.print(
-        f"[green]Pipeline #{build} triggered[/green] ({pattern} on {branch}) "
-        f"https://bitbucket.org/{workspace}/{repo}/pipelines/results/{build}"
-    )
+    url = f"https://bitbucket.org/{workspace}/{repo}/pipelines/results/{build}"
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps({"build_number": build, "uuid": result.get("uuid"),
+                               "pattern": pattern, "branch": branch, "url": url}, indent=2))
+    else:
+        console.print(f"[green]Pipeline #{build} triggered[/green] ({pattern} on {branch}) {url}")
 
 
 @bb_group.command("pipelines")
 @click.argument("pr_id", type=int)
 @click.pass_context
 def bb_pipelines(ctx, pr_id):
-    """Show pipeline status for a pull request."""
+    """Show pipeline status for a pull request.
+
+    \b
+    Examples:
+      trinity bb -r my-repo pipelines 42
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import get_pipeline_status
     api = BitbucketAPI()
@@ -666,7 +783,7 @@ def bb_pipelines(ctx, pr_id):
 
 # ── Confluence subgroup ────────────────────────────────────────────────────────
 
-@cli.group("confluence")
+@cli.group("confluence", cls=AtlassianGroup)
 @click.pass_context
 def confluence_group(ctx):
     """Confluence Cloud commands."""
@@ -680,7 +797,12 @@ def confluence_group(ctx):
 @click.option("--max-results", default=25, type=int)
 @click.pass_context
 def confluence_search(ctx, query, space, content_type, max_results):
-    """Search Confluence pages."""
+    """Search Confluence pages.
+
+    \b
+    Examples:
+      trinity confluence search "release process" --space ENG
+    """
     from .confluence.search import search_confluence
     result = search_confluence(query, space, content_type, max_results)
 
@@ -706,7 +828,12 @@ def confluence_search(ctx, query, space, content_type, max_results):
 @click.option("--ancestors", is_flag=True)
 @click.pass_context
 def confluence_get(ctx, page_id, no_body, ancestors):
-    """Get a Confluence page by ID."""
+    """Get a Confluence page by ID.
+
+    \b
+    Examples:
+      trinity confluence get 123456
+    """
     from .confluence.get_page import get_confluence_page
     result = get_confluence_page(page_id, include_body=not no_body, include_ancestors=ancestors)
     click.echo(json.dumps(result, indent=2))
@@ -936,6 +1063,48 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
         console.print("Use options to set values. Run [cyan]trinity config --help[/cyan] for details.")
 
 
+# ── Doctor ─────────────────────────────────────────────────────────────────────
+
+@cli.command("doctor")
+@click.pass_context
+def doctor(ctx):
+    """Check that every login and repo token actually works.
+
+    Run this first when a command fails or returns less than you expected.
+    Exits non-zero if any check fails.
+
+    \b
+    Examples:
+      trinity doctor
+      trinity doctor --table
+    """
+    from .base.health import run_checks
+    report = run_checks()
+
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(report, indent=2))
+    else:
+        table = Table(title=f"Trinity doctor ({report['config_file']})")
+        table.add_column("Check", style="cyan")
+        table.add_column("OK")
+        table.add_column("Detail")
+        for c in report["checks"]:
+            table.add_row(c["check"], "[green]yes[/green]" if c["ok"] else "[red]NO[/red]", c["detail"])
+        console.print(table)
+
+    if not report["ok"]:
+        sys.exit(1)
+
+
+def _report_error(error: Exception) -> None:
+    explicit = True if "--json" in sys.argv else False if "--table" in sys.argv else None
+    if _wants_json(explicit):
+        click.echo(json.dumps({"error": True, "error_type": type(error).__name__,
+                               "message": str(error)}, indent=2))
+    else:
+        click.echo(f"Error: {error}", err=True)
+
+
 def main():
     """CLI entry point."""
     try:
@@ -943,10 +1112,10 @@ def main():
     except KeyboardInterrupt:
         console.print("\n[yellow]Cancelled.[/yellow]")
         sys.exit(1)
-    except (AuthenticationError, ConfigurationError) as e:
+    except TrinityError as e:
         # These carry a remediation hint in their message. Letting them
         # escape printed a ~20-line traceback that buried it.
-        console.print(f"[red]{e}[/red]")
+        _report_error(e)
         sys.exit(1)
 
 

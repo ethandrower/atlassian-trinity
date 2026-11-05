@@ -209,8 +209,12 @@ trinity bb create \
   --title "Add search ranking improvements" \
   --source feature/search-ranking \
   --destination main \
-  --reviewers schen,dpark
+  --reviewer devbot --reviewer {11da5d04-3269-4550-be32-e201addc45af}
 ```
+
+A reviewer can be an account UUID (`{55a6c1a9-...}`), an account nickname, or
+an alias from `bitbucket.reviewer_aliases`. The PR author is always skipped, since
+Bitbucket rejects the author as a reviewer.
 
 **Options:**
 
@@ -220,7 +224,9 @@ trinity bb create \
 | `--description TEXT` | — | PR description |
 | `--source TEXT` | current git branch | Source branch name |
 | `--destination TEXT` | main | Target branch name |
-| `--reviewers TEXT` | — | Comma-separated Bitbucket usernames |
+| `--reviewer TEXT` | — | Reviewer (UUID, nickname, or alias). Repeatable. |
+| `--reviewers TEXT` | — | Comma-separated reviewers, same forms (older flag) |
+| `--draft` | off | Open as a draft PR |
 
 **JSON response (raw Bitbucket PR object):**
 
@@ -369,12 +375,17 @@ trinity bb merge 47 --strategy squash --message "feat: search ranking improvemen
 
 ## `trinity bb update <pr-id>`
 
-Update a PR's title or description.
+Update a PR's title, description, destination, or reviewers.
 
 ```bash
 trinity bb update 47 --title "feat: TF-IDF search ranking improvements"
 trinity bb update 47 --description "Updated description with benchmark results."
+trinity bb update 47 --reviewer dzana --remove-reviewer joshua
 ```
+
+`--reviewer` adds to the PR's current reviewers; it never drops anyone.
+Only `--remove-reviewer` takes a reviewer off. The current title and
+description are sent along with any reviewer change, so they stay intact.
 
 **Options:**
 
@@ -382,6 +393,10 @@ trinity bb update 47 --description "Updated description with benchmark results."
 |------|-------------|
 | `--title TEXT` | New PR title |
 | `--description TEXT` | New PR description |
+| `--description-file PATH` | Read the description from a file |
+| `--dest TEXT` | New destination branch |
+| `--reviewer TEXT` | Add a reviewer (UUID, nickname, or alias). Repeatable. |
+| `--remove-reviewer TEXT` | Remove a reviewer. Repeatable. |
 
 **JSON response (raw Bitbucket PR object):**
 
@@ -393,6 +408,56 @@ trinity bb update 47 --description "Updated description with benchmark results."
   "state": "OPEN",
   "updated_on": "2026-03-11T09:20:00.000000+00:00"
 }
+```
+
+---
+
+## `trinity bb ready <pr-id>`
+
+Take a PR out of draft and add the team's reviewers. One PUT sets
+`draft: false` and adds:
+
+- everyone in `bitbucket.default_reviewers` (skip with `--no-default-reviewers`)
+- everyone in `bitbucket.pm_reviewers`, only with `--client-visible`
+- anyone passed with `--reviewer` (repeatable)
+
+Existing reviewers are kept, the PR author is skipped, and the title and
+description are sent back unchanged. Running it again does nothing (no PUT
+is sent when the PR is already ready and has every reviewer).
+
+```bash
+trinity bb -r citemed_web ready 1160
+trinity bb -r citemed_web ready 1160 --client-visible
+trinity bb -r citemed_web ready 1160 --no-default-reviewers --reviewer mohamed
+```
+
+**JSON response:**
+
+```json
+{
+  "id": 1160,
+  "title": "feat(ECD-1234): ...",
+  "state": "OPEN",
+  "draft": false,
+  "was_draft": true,
+  "changed": true,
+  "url": "https://bitbucket.org/citemed/citemed_web/pull-requests/1160",
+  "author": "Ethan Drower",
+  "reviewers": [{"uuid": "{55a6c1a9-...}", "display_name": "Devbot", "nickname": "devbot"}],
+  "added": ["{55a6c1a9-...}"],
+  "skipped_author": [],
+  "client_visible": false
+}
+```
+
+### Reviewer config
+
+```bash
+trinity config --bb-reviewer-alias devbot={55a6c1a9-f436-4f0a-b5ec-6254ab128261}
+trinity config --bb-default-reviewer devbot --bb-default-reviewer joshua
+trinity config --bb-pm-reviewer dzana
+trinity config --bb-default-reviewer-remove joshua     # also --bb-pm-reviewer-remove, --bb-reviewer-alias-remove
+trinity config --list                                   # shows the lists and aliases
 ```
 
 ---

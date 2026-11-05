@@ -376,10 +376,10 @@ Create a pull request. Source branch defaults to current git branch.
 ```bash
 trinity bb create --title "Add search ranking improvements" \
   --source feature/search-ranking --destination main \
-  --reviewers alice,bob
+  --reviewer alice --reviewer {11da5d04-3269-4550-be32-e201addc45af}
 ```
 
-Options: `--title TEXT`, `--description TEXT`, `--source TEXT`, `--destination TEXT` (default main), `--reviewers TEXT` (comma-separated usernames)
+Options: `--title TEXT`, `--description TEXT`, `--source TEXT`, `--destination TEXT` (default main), `--draft`, `--reviewer TEXT` (repeatable: account UUID, nickname, or alias from config), `--reviewers TEXT` (comma-separated, same forms). The PR author is skipped; Bitbucket rejects them as a reviewer.
 
 ### `comment <pr-id>`
 
@@ -423,13 +423,31 @@ Options: `--message TEXT`, `--strategy merge_commit|squash|fast_forward`
 
 ### `update <pr-id>`
 
-Update PR title or description.
+Update PR title, description, destination, or reviewers. `--reviewer` adds to the current reviewers and never drops anyone.
 
 ```bash
 trinity bb update 47 --title "Fix: search ranking improvements"
+trinity bb update 47 --reviewer dzana --remove-reviewer joshua
 ```
 
-Options: `--title TEXT`, `--description TEXT`
+Options: `--title TEXT`, `--description TEXT`, `--description-file PATH`, `--dest TEXT`, `--reviewer TEXT` (repeatable), `--remove-reviewer TEXT` (repeatable)
+
+### `ready <pr-id>`
+
+Take a draft PR out of draft and add the team's reviewers in one update: `bitbucket.default_reviewers`, plus `bitbucket.pm_reviewers` with `--client-visible`, plus any `--reviewer`. Keeps existing reviewers, skips the author, leaves the title and description alone, and is safe to re-run.
+
+```bash
+trinity bb ready 47
+trinity bb ready 47 --client-visible
+trinity bb ready 47 --no-default-reviewers --reviewer mohamed
+```
+
+Set the reviewer lists and aliases with `trinity config`:
+
+```bash
+trinity config --bb-reviewer-alias devbot={55a6c1a9-f436-4f0a-b5ec-6254ab128261}
+trinity config --bb-default-reviewer devbot --bb-pm-reviewer dzana
+```
 
 ### `diff <pr-id>`
 

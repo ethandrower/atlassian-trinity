@@ -624,18 +624,23 @@ def bb_activity(ctx, pr_id, limit):
               help="Read description from file (overrides --description)")
 @click.option("--source", "-s", help="Source branch (default: current git branch)")
 @click.option("--dest", default="dev", help="Destination branch (default: dev)")
-@click.option("--reviewers", help="Comma-separated reviewer usernames or UUIDs")
+@click.option("--reviewer", "reviewer", multiple=True,
+              help="Reviewer: account UUID {...}, nickname, or alias from config. Repeatable.")
+@click.option("--reviewers", help="Comma-separated reviewers (same forms as --reviewer)")
 @click.option("--close-branch", is_flag=True, help="Close source branch on merge")
 @click.option("--draft", is_flag=True, help="Open as a draft PR (not ready for review)")
 @click.option("--web", is_flag=True, help="Open the created PR in a browser")
 @click.pass_context
-def bb_create(ctx, title, description, description_file, source, dest, reviewers,
+def bb_create(ctx, title, description, description_file, source, dest, reviewer, reviewers,
               close_branch, draft, web):
     """Create a pull request.
 
     \b
     Examples:
       trinity bb -r my-repo create -t "Fix login" --description-file body.md -s my-branch --dest main --draft
+      trinity bb -r my-repo create -t "Fix login" -s my-branch --reviewer devbot --reviewer joshua
+
+    The PR author is never added as a reviewer (Bitbucket rejects it).
     """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import create_pr
@@ -647,7 +652,8 @@ def bb_create(ctx, title, description, description_file, source, dest, reviewers
     result = create_pr(
         api, workspace, repo,
         title=title, description=description,
-        source=source, dest=dest, reviewers=reviewers,
+        source=source, dest=dest,
+        reviewers=list(reviewer) + ([reviewers] if reviewers else []),
         close_branch=close_branch, draft=draft, web=web,
     )
     if ctx.obj.get("output_json"):
@@ -657,6 +663,7 @@ def bb_create(ctx, title, description, description_file, source, dest, reviewers
         html_url = result.get("links", {}).get("html", {}).get("href", "")
         label = "draft PR" if result.get("draft") else "PR"
         console.print(f"[green]{label} #{pr_id} created:[/green] {html_url}")
+        _print_reviewers(result.get("reviewers") or [])
 
 
 @bb_group.command("merge")
@@ -720,9 +727,21 @@ def bb_decline(ctx, pr_id):
 @click.option("--description-file", type=click.Path(exists=True, dir_okay=False),
               help="Read description from file")
 @click.option("--dest", help="New destination branch")
+@click.option("--reviewer", "add_reviewers", multiple=True,
+              help="Add a reviewer (UUID {...}, nickname, or alias). Repeatable. "
+                   "Existing reviewers are kept.")
+@click.option("--remove-reviewer", "remove_reviewers", multiple=True,
+              help="Remove a reviewer (same forms). Repeatable.")
 @click.pass_context
-def bb_update(ctx, pr_id, title, description, description_file, dest):
-    """Update an existing pull request's title / description / destination."""
+def bb_update(ctx, pr_id, title, description, description_file, dest,
+              add_reviewers, remove_reviewers):
+    """Update a pull request's title, description, destination or reviewers.
+
+    \b
+    Examples:
+      trinity bb -r my-repo update 42 --title "Better title"
+      trinity bb -r my-repo update 42 --reviewer dzana --remove-reviewer joshua
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import update_pr
     if description_file:
@@ -731,11 +750,63 @@ def bb_update(ctx, pr_id, title, description, description_file, dest):
     api = BitbucketAPI()
     workspace, repo = _bb_context(ctx)
     result = update_pr(api, workspace, repo, pr_id,
-                       title=title, description=description, dest=dest)
+                       title=title, description=description, dest=dest,
+                       add_reviewers=list(add_reviewers),
+                       remove_reviewers=list(remove_reviewers))
     if ctx.obj.get("output_json"):
         click.echo(json.dumps(result, indent=2))
     else:
         console.print(f"[green]PR #{pr_id} updated[/green]")
+        if add_reviewers or remove_reviewers:
+            _print_reviewers(result.get("reviewers") or [])
+
+
+def _print_reviewers(reviewers) -> None:
+    names = [r.get("display_name") or r.get("nickname") or r.get("uuid") for r in reviewers]
+    console.print(f"Reviewers: {', '.join(names) if names else '(none)'}")
+
+
+@bb_group.command("ready")
+@click.argument("pr_id", type=int)
+@click.option("--client-visible", is_flag=True,
+              help="Also add bitbucket.pm_reviewers (for changes clients will see)")
+@click.option("--reviewer", "reviewers", multiple=True,
+              help="Extra reviewer (UUID {...}, nickname, or alias). Repeatable.")
+@click.option("--no-default-reviewers", is_flag=True,
+              help="Don't add bitbucket.default_reviewers")
+@click.pass_context
+def bb_ready(ctx, pr_id, client_visible, reviewers, no_default_reviewers):
+    """Take a PR out of draft and add the team's reviewers.
+
+    One PUT sets draft to false and adds bitbucket.default_reviewers (plus
+    bitbucket.pm_reviewers with --client-visible, plus any --reviewer). Existing
+    reviewers stay, the PR author is skipped, and the title and description are
+    left as they are. Safe to run twice: the second run changes nothing.
+
+    \b
+    Examples:
+      trinity bb -r my-repo ready 42
+      trinity bb -r my-repo ready 42 --client-visible
+      trinity bb -r my-repo ready 42 --no-default-reviewers --reviewer mohamed
+    """
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import ready_pr
+    api = BitbucketAPI()
+    workspace, repo = _bb_context(ctx)
+    result = ready_pr(api, workspace, repo, pr_id,
+                      client_visible=client_visible, reviewers=list(reviewers),
+                      use_defaults=not no_default_reviewers)
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+        return
+    state = "draft" if result["draft"] else "ready for review"
+    verb = "is now" if result["changed"] else "was already"
+    console.print(f"[green]PR #{result['id']} {verb} {state}[/green] ({result['state']}) {result.get('url') or ''}")
+    _print_reviewers(result["reviewers"])
+    if result["added"]:
+        console.print(f"Added {len(result['added'])} reviewer(s).")
+    if result["skipped_author"]:
+        console.print("[yellow]Skipped the PR author (Bitbucket won't accept them as a reviewer).[/yellow]")
 
 
 @bb_group.command("run-pipeline")
@@ -986,10 +1057,24 @@ def confluence_attach(ctx, page_id, files):
     help="Remove a per-repo Bitbucket token by WORKSPACE/REPO slug. Repeatable.",
 )
 @click.option("--bb-workspace", help="Default Bitbucket workspace")
+@click.option("--bb-default-reviewer", "bb_default_reviewers", multiple=True,
+              help="Add to bitbucket.default_reviewers (used by `bb ready`): UUID, nickname or alias. Repeatable.")
+@click.option("--bb-default-reviewer-remove", "bb_default_reviewers_remove", multiple=True,
+              help="Remove from bitbucket.default_reviewers. Repeatable.")
+@click.option("--bb-pm-reviewer", "bb_pm_reviewers", multiple=True,
+              help="Add to bitbucket.pm_reviewers (added by `bb ready --client-visible`). Repeatable.")
+@click.option("--bb-pm-reviewer-remove", "bb_pm_reviewers_remove", multiple=True,
+              help="Remove from bitbucket.pm_reviewers. Repeatable.")
+@click.option("--bb-reviewer-alias", "bb_reviewer_aliases", multiple=True,
+              help="Reviewer alias in NAME={UUID} form, e.g. devbot={55a6...}. Repeatable.")
+@click.option("--bb-reviewer-alias-remove", "bb_reviewer_aliases_remove", multiple=True,
+              help="Remove a reviewer alias by name. Repeatable.")
 @click.option("--list", "list_config", is_flag=True, help="Show current config")
 @click.option("--reset", is_flag=True, help="Reset to defaults")
 def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
-           bb_repo_tokens_remove, bb_workspace, list_config, reset):
+           bb_repo_tokens_remove, bb_workspace, bb_default_reviewers,
+           bb_default_reviewers_remove, bb_pm_reviewers, bb_pm_reviewers_remove,
+           bb_reviewer_aliases, bb_reviewer_aliases_remove, list_config, reset):
     """Manage Trinity credentials."""
     from .base.auth import load_config, save_config
 
@@ -1048,8 +1133,14 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
             cfg["bitbucket"]["repo_tokens"].pop(repo_slug.strip(), None)
             repo_tokens_changed = True
 
+    reviewers_changed = _apply_reviewer_config(
+        cfg["bitbucket"], bb_default_reviewers, bb_default_reviewers_remove,
+        bb_pm_reviewers, bb_pm_reviewers_remove,
+        bb_reviewer_aliases, bb_reviewer_aliases_remove,
+    )
+
     if any([email, token, cloud_id, jira_url, bb_token, bb_workspace,
-            repo_tokens_changed]):
+            repo_tokens_changed, reviewers_changed]):
         save_config(cfg)
         if repo_tokens_changed:
             slugs = sorted((cfg["bitbucket"].get("repo_tokens") or {}).keys())
@@ -1061,6 +1152,38 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
             console.print("[green]Config saved.[/green]")
     else:
         console.print("Use options to set values. Run [cyan]trinity config --help[/cyan] for details.")
+
+
+def _apply_reviewer_config(bb, add_default, rm_default, add_pm, rm_pm,
+                           add_alias, rm_alias) -> bool:
+    """Edit the reviewer lists and aliases in the bitbucket config section."""
+    changed = False
+    for key, adds, removes in (("default_reviewers", add_default, rm_default),
+                               ("pm_reviewers", add_pm, rm_pm)):
+        if not (adds or removes):
+            continue
+        values = list(bb.get(key) or [])
+        for v in adds:
+            v = v.strip()
+            if v and v not in values:
+                values.append(v)
+        drop = {v.strip() for v in removes}
+        bb[key] = [v for v in values if v not in drop]
+        changed = True
+    if add_alias or rm_alias:
+        aliases = dict(bb.get("reviewer_aliases") or {})
+        for pair in add_alias:
+            if "=" not in pair:
+                raise click.UsageError(f"--bb-reviewer-alias expects NAME={{UUID}}, got: {pair!r}")
+            name, target = (x.strip() for x in pair.split("=", 1))
+            if not name or not target:
+                raise click.UsageError(f"--bb-reviewer-alias needs a name and a target: {pair!r}")
+            aliases[name.lower()] = target
+        for name in rm_alias:
+            aliases.pop(name.strip().lower(), None)
+        bb["reviewer_aliases"] = aliases
+        changed = True
+    return changed
 
 
 # ── Doctor ─────────────────────────────────────────────────────────────────────

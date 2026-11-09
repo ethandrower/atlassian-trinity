@@ -45,6 +45,15 @@ def default_reviewers(cfg: Optional[Dict[str, Any]] = None) -> List[str]:
     return list(_bb_config(cfg).get("default_reviewers") or [])
 
 
+def cto_reviewers(cfg: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Reviewers added by ``bb ready`` unless ``--simple`` is passed.
+
+    The CTO tier: added on almost every PR (the approver of record), and
+    skipped only for a trivial change via ``--simple``.
+    """
+    return list(_bb_config(cfg).get("cto_reviewers") or [])
+
+
 def pm_reviewers(cfg: Optional[Dict[str, Any]] = None) -> List[str]:
     return list(_bb_config(cfg).get("pm_reviewers") or [])
 

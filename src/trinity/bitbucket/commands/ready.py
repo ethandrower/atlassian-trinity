@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from ..api import BitbucketAPI
 from ..reviewers import (
     ReviewerResolver,
+    cto_reviewers,
     default_reviewers,
     merge_reviewers,
     pm_reviewers,
@@ -23,23 +24,28 @@ def _people(pr: Dict[str, Any]) -> List[Dict[str, Any]]:
 def ready_pr(
     api: BitbucketAPI, workspace: str, repo: str, pr_id: int,
     client_visible: bool = False,
+    simple: bool = False,
     reviewers: Optional[List[str]] = None,
     use_defaults: bool = True,
     cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Mark the PR ready for review and add reviewers, in one PUT.
 
-    Adds bitbucket.default_reviewers (unless use_defaults is False), plus
-    bitbucket.pm_reviewers when client_visible, plus any explicit reviewers.
-    Keeps every existing reviewer, skips the PR author, and leaves the title
-    and description as they are. Running it twice changes nothing the second
-    time: no PUT is sent when the PR is already ready and has everyone.
+    Adds bitbucket.default_reviewers and bitbucket.cto_reviewers (unless
+    use_defaults is False), plus bitbucket.pm_reviewers when client_visible,
+    plus any explicit reviewers. ``simple`` drops the cto_reviewers tier for a
+    trivial change. Keeps every existing reviewer, skips the PR author, and
+    leaves the title and description as they are. Running it twice changes
+    nothing the second time: no PUT is sent when the PR is already ready and
+    has everyone.
     """
     current = api.get_pull_request(workspace, repo, pr_id)
 
     names: List[str] = []
     if use_defaults:
         names += default_reviewers(cfg)
+        if not simple:
+            names += cto_reviewers(cfg)
     if client_visible:
         names += pm_reviewers(cfg)
     names += split_names(reviewers or [])
@@ -77,4 +83,5 @@ def ready_pr(
         "added": summary["added"],
         "skipped_author": summary["skipped_author"],
         "client_visible": client_visible,
+        "simple": simple,
     }

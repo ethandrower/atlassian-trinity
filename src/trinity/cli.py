@@ -770,23 +770,28 @@ def _print_reviewers(reviewers) -> None:
 @click.argument("pr_id", type=int)
 @click.option("--client-visible", is_flag=True,
               help="Also add bitbucket.pm_reviewers (for changes clients will see)")
+@click.option("--simple", is_flag=True,
+              help="Trivial change: skip the CTO tier (bitbucket.cto_reviewers)")
 @click.option("--reviewer", "reviewers", multiple=True,
               help="Extra reviewer (UUID {...}, nickname, or alias). Repeatable.")
 @click.option("--no-default-reviewers", is_flag=True,
-              help="Don't add bitbucket.default_reviewers")
+              help="Don't add bitbucket.default_reviewers or bitbucket.cto_reviewers")
 @click.pass_context
-def bb_ready(ctx, pr_id, client_visible, reviewers, no_default_reviewers):
+def bb_ready(ctx, pr_id, client_visible, simple, reviewers, no_default_reviewers):
     """Take a PR out of draft and add the team's reviewers.
 
-    One PUT sets draft to false and adds bitbucket.default_reviewers (plus
-    bitbucket.pm_reviewers with --client-visible, plus any --reviewer). Existing
-    reviewers stay, the PR author is skipped, and the title and description are
-    left as they are. Safe to run twice: the second run changes nothing.
+    One PUT sets draft to false and adds bitbucket.default_reviewers plus
+    bitbucket.cto_reviewers (the CTO tier, almost always), plus
+    bitbucket.pm_reviewers with --client-visible, plus any --reviewer. Pass
+    --simple for a trivial change to skip the CTO tier. Existing reviewers
+    stay, the PR author is skipped, and the title and description are left as
+    they are. Safe to run twice: the second run changes nothing.
 
     \b
     Examples:
       trinity bb -r my-repo ready 42
       trinity bb -r my-repo ready 42 --client-visible
+      trinity bb -r my-repo ready 42 --simple
       trinity bb -r my-repo ready 42 --no-default-reviewers --reviewer mohamed
     """
     from .bitbucket.api import BitbucketAPI
@@ -794,7 +799,8 @@ def bb_ready(ctx, pr_id, client_visible, reviewers, no_default_reviewers):
     api = BitbucketAPI()
     workspace, repo = _bb_context(ctx)
     result = ready_pr(api, workspace, repo, pr_id,
-                      client_visible=client_visible, reviewers=list(reviewers),
+                      client_visible=client_visible, simple=simple,
+                      reviewers=list(reviewers),
                       use_defaults=not no_default_reviewers)
     if ctx.obj.get("output_json"):
         click.echo(json.dumps(result, indent=2))
@@ -1065,6 +1071,10 @@ def confluence_attach(ctx, page_id, files):
               help="Add to bitbucket.pm_reviewers (added by `bb ready --client-visible`). Repeatable.")
 @click.option("--bb-pm-reviewer-remove", "bb_pm_reviewers_remove", multiple=True,
               help="Remove from bitbucket.pm_reviewers. Repeatable.")
+@click.option("--bb-cto-reviewer", "bb_cto_reviewers", multiple=True,
+              help="Add to bitbucket.cto_reviewers (added by `bb ready` unless --simple). Repeatable.")
+@click.option("--bb-cto-reviewer-remove", "bb_cto_reviewers_remove", multiple=True,
+              help="Remove from bitbucket.cto_reviewers. Repeatable.")
 @click.option("--bb-reviewer-alias", "bb_reviewer_aliases", multiple=True,
               help="Reviewer alias in NAME={UUID} form, e.g. devbot={55a6...}. Repeatable.")
 @click.option("--bb-reviewer-alias-remove", "bb_reviewer_aliases_remove", multiple=True,
@@ -1074,6 +1084,7 @@ def confluence_attach(ctx, page_id, files):
 def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
            bb_repo_tokens_remove, bb_workspace, bb_default_reviewers,
            bb_default_reviewers_remove, bb_pm_reviewers, bb_pm_reviewers_remove,
+           bb_cto_reviewers, bb_cto_reviewers_remove,
            bb_reviewer_aliases, bb_reviewer_aliases_remove, list_config, reset):
     """Manage Trinity credentials."""
     from .base.auth import load_config, save_config
@@ -1136,6 +1147,7 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
     reviewers_changed = _apply_reviewer_config(
         cfg["bitbucket"], bb_default_reviewers, bb_default_reviewers_remove,
         bb_pm_reviewers, bb_pm_reviewers_remove,
+        bb_cto_reviewers, bb_cto_reviewers_remove,
         bb_reviewer_aliases, bb_reviewer_aliases_remove,
     )
 
@@ -1155,11 +1167,12 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
 
 
 def _apply_reviewer_config(bb, add_default, rm_default, add_pm, rm_pm,
-                           add_alias, rm_alias) -> bool:
+                           add_cto, rm_cto, add_alias, rm_alias) -> bool:
     """Edit the reviewer lists and aliases in the bitbucket config section."""
     changed = False
     for key, adds, removes in (("default_reviewers", add_default, rm_default),
-                               ("pm_reviewers", add_pm, rm_pm)):
+                               ("pm_reviewers", add_pm, rm_pm),
+                               ("cto_reviewers", add_cto, rm_cto)):
         if not (adds or removes):
             continue
         values = list(bb.get(key) or [])

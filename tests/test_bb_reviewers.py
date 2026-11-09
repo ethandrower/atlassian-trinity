@@ -174,6 +174,37 @@ def test_ready_adds_pm_only_when_client_visible():
     assert _uuids(api.puts[0])[-1] == DZANA
 
 
+# The migrated tier model: Mohamed sits in cto_reviewers, dropped by --simple.
+CFG_CTO = {
+    "bitbucket": {
+        "default_reviewers": [DEVBOT, "joshua"],
+        "cto_reviewers": ["mohamed"],
+        "pm_reviewers": ["dzana"],
+        "reviewer_aliases": {"devbot": DEVBOT, "joshua": JOSHUA,
+                             "mohamed": MOHAMED, "dzana": DZANA},
+    }
+}
+
+
+def test_ready_adds_cto_tier_by_default():
+    api = FakeAPI(pr=_pr())
+    ready_pr(api, "ws", "repo", 42, cfg=CFG_CTO)
+    assert _uuids(api.puts[0]) == [DEVBOT, JOSHUA, MOHAMED]
+
+
+def test_ready_simple_drops_the_cto_tier():
+    api = FakeAPI(pr=_pr())
+    ready_pr(api, "ws", "repo", 42, simple=True, cfg=CFG_CTO)
+    assert _uuids(api.puts[0]) == [DEVBOT, JOSHUA]
+
+
+def test_ready_simple_still_adds_pm_when_client_visible():
+    api = FakeAPI(pr=_pr())
+    ready_pr(api, "ws", "repo", 42, simple=True, client_visible=True, cfg=CFG_CTO)
+    uuids = _uuids(api.puts[0])
+    assert MOHAMED not in uuids and DZANA in uuids
+
+
 def test_ready_no_defaults_with_explicit_reviewer():
     api = FakeAPI(pr=_pr())
     ready_pr(api, "ws", "repo", 42, use_defaults=False, reviewers=["dzana"], cfg=CFG)

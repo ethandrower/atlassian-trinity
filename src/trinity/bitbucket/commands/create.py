@@ -4,6 +4,7 @@ import webbrowser
 from typing import Any, Dict, List, Optional
 
 from ..api import BitbucketAPI
+from ..reviewers import ReviewerResolver, normalize_uuid, split_names
 
 try:
     from git import Repo, InvalidGitRepositoryError
@@ -22,15 +23,12 @@ def _current_branch() -> Optional[str]:
         return None
 
 
-def _resolve_reviewers(api: BitbucketAPI, workspace: str, reviewer_names: List[str]) -> List[Dict]:
-    resolved = []
-    for name in reviewer_names:
-        try:
-            user = api.get(f"/users/{name}")
-            resolved.append({"uuid": user.get("uuid")})
-        except Exception:
-            resolved.append({"username": name})
-    return resolved
+def _current_user_uuid(api: BitbucketAPI) -> Optional[str]:
+    """The account that will author the PR; Bitbucket rejects it as a reviewer."""
+    try:
+        return normalize_uuid(api.get_current_user().get("uuid") or "")
+    except Exception:
+        return None
 
 
 def create_pr(
@@ -41,7 +39,7 @@ def create_pr(
     description: Optional[str] = None,
     source: Optional[str] = None,
     dest: Optional[str] = "main",
-    reviewers: Optional[str] = None,
+    reviewers: Optional[Any] = None,
     close_branch: bool = False,
     web: bool = False,
     draft: bool = False,
@@ -49,10 +47,14 @@ def create_pr(
 ) -> Dict[str, Any]:
     source_branch = source or _current_branch() or "main"
 
+    # `reviewers` is a comma-separated string (old --reviewers) or a list
+    # (repeatable --reviewer); either may hold UUIDs, aliases or nicknames.
     reviewer_list = []
     if reviewers:
-        names = [r.strip() for r in reviewers.split(",")]
-        reviewer_list = _resolve_reviewers(api, workspace, names)
+        names = split_names([reviewers] if isinstance(reviewers, str) else reviewers)
+        uuids = ReviewerResolver(api, workspace, repo).resolve_all(names)
+        author = _current_user_uuid(api)
+        reviewer_list = [{"uuid": u} for u in uuids if u != author]
 
     pr = api.create_pull_request(
         workspace, repo,

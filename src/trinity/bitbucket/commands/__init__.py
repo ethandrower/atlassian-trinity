@@ -8,6 +8,7 @@ from .decline import decline_pr
 from .merge import merge_pr
 from .comment import comment_pr
 from .update import update_pr
+from .ready import ready_pr
 from .diff import diff_pr
 from .activity import activity_pr
 from .pipelines import get_pipeline_status
@@ -15,6 +16,6 @@ from .pipelines import get_pipeline_status
 __all__ = [
     "list_prs", "show_pr", "create_pr",
     "approve_pr", "unapprove_pr", "decline_pr",
-    "merge_pr", "comment_pr", "update_pr",
+    "merge_pr", "comment_pr", "update_pr", "ready_pr",
     "diff_pr", "activity_pr", "get_pipeline_status",
 ]

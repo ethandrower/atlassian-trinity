@@ -220,8 +220,11 @@ class BitbucketAPI:
             payload["description"] = kwargs["description"]
         if kwargs.get("destination_branch"):
             payload["destination"] = {"branch": {"name": kwargs["destination_branch"]}}
-        if kwargs.get("reviewers"):
+        # `is not None` so an explicit empty list can clear every reviewer.
+        if kwargs.get("reviewers") is not None:
             payload["reviewers"] = kwargs["reviewers"]
+        if kwargs.get("draft") is not None:
+            payload["draft"] = bool(kwargs["draft"])
         return self.put(f"/repositories/{workspace}/{repo}/pullrequests/{pr_id}", json=payload)
 
     def approve_pull_request(self, workspace: str, repo: str, pr_id: int) -> Dict[str, Any]:

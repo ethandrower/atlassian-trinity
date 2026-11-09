@@ -73,6 +73,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # Lookup order: this map → BITBUCKET_REPO_TOKEN env / repo_token
         # field → username + app_password Basic Auth.
         "repo_tokens": {},
+        # Reviewers `bb ready` adds when a PR leaves draft (UUIDs, nicknames
+        # or aliases), and the extra ones it adds with --client-visible.
+        "default_reviewers": [],
+        "pm_reviewers": [],
+        # Short names for reviewers, e.g. {"devbot": "{55a6c1a9-...}"}.
+        "reviewer_aliases": {},
     },
     "api": {
         "timeout": 30,

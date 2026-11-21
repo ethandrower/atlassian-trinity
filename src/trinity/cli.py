@@ -564,18 +564,27 @@ def bb_show(ctx, pr_id, include_comments):
 @click.option("--file", help="File path for inline comment")
 @click.option("--line", type=int, help="Line number")
 @click.option("--reply-to", type=int, help="Reply to comment ID")
+@click.option("--as", "as_identity",
+              help="Post the comment as a named user identity (bitbucket.identities), "
+                   "e.g. --as devbot — so it's authored by that user and not by the "
+                   "repository access token. Reads/token ops are unaffected.")
 @click.pass_context
-def bb_comment(ctx, pr_id, message, file, line, reply_to):
+def bb_comment(ctx, pr_id, message, file, line, reply_to, as_identity):
     """Add a comment to a pull request.
+
+    With --as <name> the comment is authored by that Bitbucket user (e.g.
+    devbot@citemed.com); otherwise it posts with whatever credentials the home
+    is configured with (a repository access token for the developer identity).
 
     \b
     Examples:
       trinity bb -r my-repo comment 42 -m "Looks good"
+      trinity bb -r my-repo comment 42 -m "Looks good" --as devbot
       trinity bb -r my-repo comment 42 -m "Null check?" --file src/app.py --line 10
     """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import comment_pr
-    api = BitbucketAPI()
+    api = BitbucketAPI(prefer_user=True, as_identity=as_identity)
     workspace, repo = _bb_context(ctx)
     result = comment_pr(api, workspace, repo, pr_id, message, file=file, line=line, reply_to=reply_to)
     click.echo(json.dumps(result, indent=2))
@@ -688,30 +697,110 @@ def bb_merge(ctx, pr_id, strategy, message, close_branch):
         console.print(f"[green]PR #{pr_id} merged[/green] ({strategy})")
 
 
+_AS_HELP = (
+    "Act as a named Bitbucket user identity (from bitbucket.identities), e.g. "
+    "--as devbot. Approving a PR must be done as a real user — a repository "
+    "access token cannot — so this selects whose credentials to use."
+)
+
+
 @bb_group.command("approve")
 @click.argument("pr_id", type=int)
+@click.option("--as", "as_identity", help=_AS_HELP)
 @click.pass_context
-def bb_approve(ctx, pr_id):
-    """Approve a pull request."""
+def bb_approve(ctx, pr_id, as_identity):
+    """Approve a pull request (as a real user).
+
+    Approval is recorded against a user account, so this always authenticates
+    as a user — never a repository access token (Bitbucket rejects those with
+    400). Pass --as <name> to approve as a configured identity; otherwise the
+    current home's user credentials (bitbucket.username + bitbucket.app_password,
+    or BITBUCKET_USERNAME/BITBUCKET_APP_PASSWORD) are used.
+
+    \b
+    Examples:
+      trinity bb -r my-repo approve 42 --as devbot
+      TRINITY_HOME=~/.trinity-agent trinity bb -r my-repo approve 42
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import approve_pr
-    api = BitbucketAPI()
+    api = BitbucketAPI(require_user=True, as_identity=as_identity)
     workspace, repo = _bb_context(ctx)
     result = approve_pr(api, workspace, repo, pr_id)
     if ctx.obj.get("output_json"):
         click.echo(json.dumps(result, indent=2))
     else:
-        console.print(f"[green]PR #{pr_id} approved[/green]")
+        who = f" as {as_identity}" if as_identity else ""
+        console.print(f"[green]PR #{pr_id} approved{who}[/green]")
+
+
+@bb_group.command("unapprove")
+@click.argument("pr_id", type=int)
+@click.option("--as", "as_identity", help=_AS_HELP)
+@click.pass_context
+def bb_unapprove(ctx, pr_id, as_identity):
+    """Remove your (or --as <name>'s) approval from a pull request."""
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import unapprove_pr
+    api = BitbucketAPI(require_user=True, as_identity=as_identity)
+    workspace, repo = _bb_context(ctx)
+    result = unapprove_pr(api, workspace, repo, pr_id)
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        who = f" by {as_identity}" if as_identity else ""
+        console.print(f"[yellow]PR #{pr_id} approval removed{who}[/yellow]")
+
+
+@bb_group.command("request-changes")
+@click.argument("pr_id", type=int)
+@click.option("--remove", is_flag=True,
+              help="Clear your (or --as <name>'s) change request instead of adding one.")
+@click.option("--as", "as_identity", help=_AS_HELP)
+@click.pass_context
+def bb_request_changes(ctx, pr_id, remove, as_identity):
+    """Request changes on a pull request (as a real user).
+
+    Like approve, this records a reviewer state against a user account, so it
+    always authenticates as a user — never a repository access token. Use
+    --remove to clear a previous change request.
+
+    \b
+    Examples:
+      trinity bb -r my-repo request-changes 42 --as devbot
+      trinity bb -r my-repo request-changes 42 --remove --as devbot
+    """
+    from .bitbucket.api import BitbucketAPI
+    from .bitbucket.commands import request_changes_pr, unrequest_changes_pr
+    api = BitbucketAPI(require_user=True, as_identity=as_identity)
+    workspace, repo = _bb_context(ctx)
+    if remove:
+        result = unrequest_changes_pr(api, workspace, repo, pr_id)
+        label = "change request cleared"
+    else:
+        result = request_changes_pr(api, workspace, repo, pr_id)
+        label = "changes requested"
+    if ctx.obj.get("output_json"):
+        click.echo(json.dumps(result, indent=2))
+    else:
+        who = f" as {as_identity}" if as_identity else ""
+        console.print(f"[yellow]PR #{pr_id} {label}{who}[/yellow]")
 
 
 @bb_group.command("decline")
 @click.argument("pr_id", type=int)
+@click.option("--as", "as_identity", help=_AS_HELP)
 @click.pass_context
-def bb_decline(ctx, pr_id):
-    """Decline a pull request."""
+def bb_decline(ctx, pr_id, as_identity):
+    """Decline a pull request.
+
+    Acts as a real user when one is available (so the decline is attributed),
+    and as the identity given by --as <name>. Falls back to the repository
+    access token only when no user credentials are configured.
+    """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import decline_pr
-    api = BitbucketAPI()
+    api = BitbucketAPI(prefer_user=True, as_identity=as_identity)
     workspace, repo = _bb_context(ctx)
     result = decline_pr(api, workspace, repo, pr_id)
     if ctx.obj.get("output_json"):
@@ -732,9 +821,10 @@ def bb_decline(ctx, pr_id):
                    "Existing reviewers are kept.")
 @click.option("--remove-reviewer", "remove_reviewers", multiple=True,
               help="Remove a reviewer (same forms). Repeatable.")
+@click.option("--as", "as_identity", help=_AS_HELP)
 @click.pass_context
 def bb_update(ctx, pr_id, title, description, description_file, dest,
-              add_reviewers, remove_reviewers):
+              add_reviewers, remove_reviewers, as_identity):
     """Update a pull request's title, description, destination or reviewers.
 
     \b
@@ -747,7 +837,7 @@ def bb_update(ctx, pr_id, title, description, description_file, dest,
     if description_file:
         with open(description_file) as f:
             description = f.read()
-    api = BitbucketAPI()
+    api = BitbucketAPI(as_identity=as_identity)
     workspace, repo = _bb_context(ctx)
     result = update_pr(api, workspace, repo, pr_id,
                        title=title, description=description, dest=dest,
@@ -776,8 +866,10 @@ def _print_reviewers(reviewers) -> None:
               help="Extra reviewer (UUID {...}, nickname, or alias). Repeatable.")
 @click.option("--no-default-reviewers", is_flag=True,
               help="Don't add bitbucket.default_reviewers or bitbucket.cto_reviewers")
+@click.option("--as", "as_identity", help=_AS_HELP)
 @click.pass_context
-def bb_ready(ctx, pr_id, client_visible, simple, reviewers, no_default_reviewers):
+def bb_ready(ctx, pr_id, client_visible, simple, reviewers, no_default_reviewers,
+             as_identity):
     """Take a PR out of draft and add the team's reviewers.
 
     One PUT sets draft to false and adds bitbucket.default_reviewers plus
@@ -796,7 +888,7 @@ def bb_ready(ctx, pr_id, client_visible, simple, reviewers, no_default_reviewers
     """
     from .bitbucket.api import BitbucketAPI
     from .bitbucket.commands import ready_pr
-    api = BitbucketAPI()
+    api = BitbucketAPI(as_identity=as_identity)
     workspace, repo = _bb_context(ctx)
     result = ready_pr(api, workspace, repo, pr_id,
                       client_visible=client_visible, simple=simple,
@@ -1063,6 +1155,18 @@ def confluence_attach(ctx, page_id, files):
     help="Remove a per-repo Bitbucket token by WORKSPACE/REPO slug. Repeatable.",
 )
 @click.option("--bb-workspace", help="Default Bitbucket workspace")
+@click.option("--bb-username",
+              help="Bitbucket user for actions a repo token can't do (approve/decline). "
+                   "An Atlassian account email or Bitbucket username.")
+@click.option("--bb-app-password",
+              help="Bitbucket app password / API token paired with --bb-username. "
+                   "Stored with 0600 perms; masked by --list.")
+@click.option("--bb-identity", "bb_identities", multiple=True,
+              help="Named user identity in NAME=HOME form, e.g. devbot=~/.trinity-agent — "
+                   "HOME is a TRINITY_HOME dir whose config.yaml has bitbucket.username + "
+                   "bitbucket.app_password. Use with: trinity bb approve <id> --as NAME. Repeatable.")
+@click.option("--bb-identity-remove", "bb_identities_remove", multiple=True,
+              help="Remove a named identity by NAME. Repeatable.")
 @click.option("--bb-default-reviewer", "bb_default_reviewers", multiple=True,
               help="Add to bitbucket.default_reviewers (used by `bb ready`): UUID, nickname or alias. Repeatable.")
 @click.option("--bb-default-reviewer-remove", "bb_default_reviewers_remove", multiple=True,
@@ -1082,7 +1186,8 @@ def confluence_attach(ctx, page_id, files):
 @click.option("--list", "list_config", is_flag=True, help="Show current config")
 @click.option("--reset", is_flag=True, help="Reset to defaults")
 def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
-           bb_repo_tokens_remove, bb_workspace, bb_default_reviewers,
+           bb_repo_tokens_remove, bb_workspace, bb_username, bb_app_password,
+           bb_identities, bb_identities_remove, bb_default_reviewers,
            bb_default_reviewers_remove, bb_pm_reviewers, bb_pm_reviewers_remove,
            bb_cto_reviewers, bb_cto_reviewers_remove,
            bb_reviewer_aliases, bb_reviewer_aliases_remove, list_config, reset):
@@ -1107,6 +1212,12 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
         repo_tokens = display.get("bitbucket", {}).get("repo_tokens") or {}
         if repo_tokens:
             display["bitbucket"]["repo_tokens"] = {k: "***" for k in repo_tokens}
+        if display.get("bitbucket", {}).get("app_password"):
+            display["bitbucket"]["app_password"] = "***"
+        identities = display.get("bitbucket", {}).get("identities") or {}
+        for name, entry in identities.items():
+            if isinstance(entry, dict) and entry.get("app_password"):
+                entry["app_password"] = "***"
         click.echo(json.dumps(display, indent=2))
         return
 
@@ -1122,6 +1233,29 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
         cfg["bitbucket"]["repo_token"] = bb_token
     if bb_workspace:
         cfg["bitbucket"]["workspace"] = bb_workspace
+    if bb_username:
+        cfg["bitbucket"]["username"] = bb_username
+    if bb_app_password:
+        cfg["bitbucket"]["app_password"] = bb_app_password
+
+    identities_changed = False
+    if bb_identities or bb_identities_remove:
+        cfg["bitbucket"].setdefault("identities", {})
+        for pair in bb_identities:
+            if "=" not in pair:
+                raise click.UsageError(
+                    f"--bb-identity expects NAME=HOME, got: {pair!r}"
+                )
+            name, home = (x.strip() for x in pair.split("=", 1))
+            if not name or not home:
+                raise click.UsageError(
+                    f"--bb-identity needs a name and a home path: {pair!r}"
+                )
+            cfg["bitbucket"]["identities"][name] = {"home": home}
+            identities_changed = True
+        for name in bb_identities_remove:
+            cfg["bitbucket"]["identities"].pop(name.strip(), None)
+            identities_changed = True
 
     repo_tokens_changed = False
     if bb_repo_tokens or bb_repo_tokens_remove:
@@ -1152,6 +1286,7 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
     )
 
     if any([email, token, cloud_id, jira_url, bb_token, bb_workspace,
+            bb_username, bb_app_password, identities_changed,
             repo_tokens_changed, reviewers_changed]):
         save_config(cfg)
         if repo_tokens_changed:
@@ -1159,6 +1294,12 @@ def config(email, token, cloud_id, jira_url, bb_token, bb_repo_tokens,
             console.print(
                 f"[green]Config saved.[/green] Per-repo tokens now set for: "
                 f"{', '.join(slugs) if slugs else '(none)'}"
+            )
+        elif identities_changed:
+            names = sorted((cfg["bitbucket"].get("identities") or {}).keys())
+            console.print(
+                f"[green]Config saved.[/green] Identities now set for: "
+                f"{', '.join(names) if names else '(none)'}"
             )
         else:
             console.print("[green]Config saved.[/green]")

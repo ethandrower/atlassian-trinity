@@ -32,6 +32,47 @@ def test_diff_sends_the_per_repo_token(monkeypatch):
     assert seen["repo"] == "citemed/citemed_web"
 
 
+def _capture_request(api, monkeypatch):
+    """Record the headers/body of the next session.request call."""
+    seen = {}
+
+    def request(method, url, headers=None, timeout=None, **kw):
+        seen.update(method=method, url=url, headers=headers or {}, kwargs=kw)
+        return SimpleNamespace(status_code=200, content=b"{}", json=lambda: {})
+
+    monkeypatch.setattr(api.session, "request", request)
+    monkeypatch.setattr(api, "_headers",
+                        lambda repo=None: {"Authorization": "Basic x",
+                                           "Content-Type": "application/json"})
+    return seen
+
+
+def test_bodyless_post_drops_content_type(monkeypatch):
+    """Approve is a bodyless POST; Content-Type: application/json with no body
+    makes Bitbucket return 400, so it must not be sent."""
+    api = BitbucketAPI()
+    seen = _capture_request(api, monkeypatch)
+    api.approve_pull_request("citemed", "citemed_web", 1243)
+    assert seen["method"] == "POST"
+    assert "Content-Type" not in seen["headers"]
+    assert seen["kwargs"].get("json") is None
+
+
+def test_request_changes_is_also_bodyless(monkeypatch):
+    api = BitbucketAPI()
+    seen = _capture_request(api, monkeypatch)
+    api.request_changes_pull_request("citemed", "citemed_web", 1243)
+    assert "Content-Type" not in seen["headers"]
+
+
+def test_post_with_body_keeps_content_type(monkeypatch):
+    api = BitbucketAPI()
+    seen = _capture_request(api, monkeypatch)
+    api.add_comment("citemed", "citemed_web", 1243, "hello")
+    assert seen["headers"].get("Content-Type") == "application/json"
+    assert seen["kwargs"].get("json") == {"content": {"raw": "hello"}}
+
+
 def _fake_pages(api, monkeypatch, total):
     calls = []
 

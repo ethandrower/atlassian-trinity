@@ -8,7 +8,13 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from ..base.auth import get_bitbucket_auth_headers, get_workspace, load_config
+from ..base.auth import (
+    get_bitbucket_auth_headers,
+    get_bitbucket_user_auth_headers,
+    get_workspace,
+    has_bitbucket_user_credentials,
+    load_config,
+)
 from ..base.exceptions import (
     AtlassianAPIError,
     AuthenticationError,
@@ -52,9 +58,28 @@ def _rejected_token_message(repo: Optional[str]) -> str:
 class BitbucketAPI:
     """Bitbucket Cloud REST API v2.0 client with retry and error handling."""
 
-    def __init__(self, timeout: int = 30, retries: int = 3):
+    def __init__(
+        self,
+        timeout: int = 30,
+        retries: int = 3,
+        require_user: bool = False,
+        prefer_user: bool = False,
+        as_identity: Optional[str] = None,
+    ):
+        """Bitbucket REST client.
+
+        Auth mode (for actions that must act as a real user, e.g. approve):
+          as_identity: act as this named identity's user (authoritative).
+          require_user: hard — user Basic auth only; error if none available.
+          prefer_user: soft — user auth when available, else the token path.
+        The default (all off) keeps the token-first resolver for reads/writes
+        that a repository access token can perform.
+        """
         self.base_url = BITBUCKET_BASE_URL
         self.timeout = timeout
+        self._require_user = require_user
+        self._prefer_user = prefer_user
+        self._as_identity = as_identity
 
         self.session = requests.Session()
         retry_strategy = Retry(
@@ -68,6 +93,15 @@ class BitbucketAPI:
         self.session.mount("https://", adapter)
 
     def _headers(self, repo: Optional[str] = None) -> Dict[str, str]:
+        # User-identity actions (approve/unapprove/decline, or an explicit
+        # --as) must authenticate as a real user; a repository access token
+        # cannot approve a PR (Bitbucket returns 400).
+        if self._as_identity:
+            return get_bitbucket_user_auth_headers(repo=repo, as_identity=self._as_identity)
+        if self._require_user:
+            return get_bitbucket_user_auth_headers(repo=repo)
+        if self._prefer_user and has_bitbucket_user_credentials():
+            return get_bitbucket_user_auth_headers(repo=repo)
         return get_bitbucket_auth_headers(repo=repo)
 
     def _handle_response(
@@ -120,6 +154,12 @@ class BitbucketAPI:
         headers = self._headers(repo=repo)
         if "headers" in kwargs:
             headers.update(kwargs.pop("headers"))
+        # A "Content-Type: application/json" header with no body makes Bitbucket
+        # reject bodyless POSTs — notably /approve and /request-changes — with
+        # HTTP 400. Only advertise a JSON body when one is actually being sent.
+        has_body = any(kwargs.get(k) is not None for k in ("json", "data", "files"))
+        if not has_body:
+            headers.pop("Content-Type", None)
         response = self.session.request(method=method, url=url, headers=headers, timeout=self.timeout, **kwargs)
         return self._handle_response(response, repo=repo)
 
@@ -232,6 +272,14 @@ class BitbucketAPI:
 
     def unapprove_pull_request(self, workspace: str, repo: str, pr_id: int) -> Dict[str, Any]:
         return self.delete(f"/repositories/{workspace}/{repo}/pullrequests/{pr_id}/approve")
+
+    def request_changes_pull_request(self, workspace: str, repo: str, pr_id: int) -> Dict[str, Any]:
+        # Like /approve, this records a reviewer *state* against a user account,
+        # so it needs real-user auth — a repository access token gets HTTP 400.
+        return self.post(f"/repositories/{workspace}/{repo}/pullrequests/{pr_id}/request-changes")
+
+    def remove_change_request_pull_request(self, workspace: str, repo: str, pr_id: int) -> Dict[str, Any]:
+        return self.delete(f"/repositories/{workspace}/{repo}/pullrequests/{pr_id}/request-changes")
 
     def decline_pull_request(self, workspace: str, repo: str, pr_id: int, message: Optional[str] = None) -> Dict[str, Any]:
         payload = {"message": message} if message else {}

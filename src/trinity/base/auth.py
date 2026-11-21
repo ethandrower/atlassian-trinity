@@ -62,6 +62,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "username": None,
         "app_password": None,
         "workspace": None,
+        # Named user identities for commands that must act as a real user
+        # (approve / unapprove / decline / reviewer state). Keyed by a short
+        # name, e.g. {"devbot": {"home": "~/.trinity-agent"}}. An entry either
+        # points at another TRINITY_HOME directory whose config.yaml carries
+        # bitbucket.username + bitbucket.app_password (no secret duplicated), or
+        # carries {"username": ..., "app_password": ...} inline. Selected with
+        # `trinity bb approve <id> --as <name>`. Repository access tokens can't
+        # approve PRs — only a real user can — so these name the users who may.
+        "identities": {},
         # Default repo for `bb` commands invoked without -R. Resolution
         # order: -R flag → BITBUCKET_DEFAULT_REPO env → this field →
         # current git remote → error. Keeps `bb pr list` ergonomic when
@@ -91,6 +100,23 @@ def _ensure_config_dir() -> None:
     CONFIG_DIR.mkdir(exist_ok=True, mode=0o700)
 
 
+def _merge(default: dict, user: dict) -> dict:
+    result = default.copy()
+    for k, v in user.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+def _load_config_file(config_file: Path) -> Dict[str, Any]:
+    """Read one config.yaml and merge it onto DEFAULT_CONFIG."""
+    with open(config_file) as f:
+        user_config = yaml.safe_load(f) or {}
+    return _merge(DEFAULT_CONFIG, user_config)
+
+
 def load_config() -> Dict[str, Any]:
     """Load config from ~/.trinity/config.yaml, creating defaults if absent."""
     _ensure_config_dir()
@@ -100,24 +126,29 @@ def load_config() -> Dict[str, Any]:
         return DEFAULT_CONFIG.copy()
 
     try:
-        with open(CONFIG_FILE) as f:
-            user_config = yaml.safe_load(f) or {}
-
-        def _merge(default: dict, user: dict) -> dict:
-            result = default.copy()
-            for k, v in user.items():
-                if k in result and isinstance(result[k], dict) and isinstance(v, dict):
-                    result[k] = _merge(result[k], v)
-                else:
-                    result[k] = v
-            return result
-
-        return _merge(DEFAULT_CONFIG, user_config)
-
+        return _load_config_file(CONFIG_FILE)
     except yaml.YAMLError as e:
         raise ConfigurationError(f"Invalid YAML in config file: {e}")
     except Exception as e:
         raise ConfigurationError(f"Error loading config: {e}")
+
+
+def load_config_from(home: str) -> Dict[str, Any]:
+    """Load the config.yaml of another TRINITY_HOME directory.
+
+    Used to resolve a named identity whose user credentials live in a separate
+    home (e.g. a bot's ~/.trinity-agent), so the secret is read from there
+    rather than duplicated into the caller's config.
+    """
+    path = Path(home).expanduser() / "config.yaml"
+    if not path.exists():
+        raise ConfigurationError(
+            f"No Trinity config at {path} for this identity (expected a config.yaml there)."
+        )
+    try:
+        return _load_config_file(path)
+    except yaml.YAMLError as e:
+        raise ConfigurationError(f"Invalid YAML in {path}: {e}")
 
 
 def save_config(config: Dict[str, Any]) -> None:
@@ -224,13 +255,7 @@ def get_bitbucket_auth_headers(
     username = os.getenv("BITBUCKET_USERNAME") or bb.get("username")
     app_password = os.getenv("BITBUCKET_APP_PASSWORD") or bb.get("app_password")
     if username and app_password:
-        encoded = base64.b64encode(f"{username}:{app_password}".encode()).decode()
-        return {
-            "Authorization": f"Basic {encoded}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "User-Agent": "trinity-atlassian-cli/0.1.0",
-        }
+        return _basic_headers(username, app_password)
 
     if repo:
         # Name the repo. With per-repo tokens the common failure is not
@@ -255,6 +280,141 @@ def _bearer_headers(token: str) -> Dict[str, str]:
         "Accept": "application/json",
         "User-Agent": "trinity-atlassian-cli/0.1.0",
     }
+
+
+def _basic_headers(username: str, app_password: str) -> Dict[str, str]:
+    encoded = base64.b64encode(f"{username}:{app_password}".encode()).decode()
+    return {
+        "Authorization": f"Basic {encoded}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "trinity-atlassian-cli/0.1.0",
+    }
+
+
+# ── Bitbucket user auth (approve / decline / reviewer state) ─────────────────────
+#
+# Some Bitbucket actions are tied to a *user*, not a repository: approving a PR
+# records "this person approved". A repository (or workspace) access token is not
+# a user, so Bitbucket rejects /approve from one with HTTP 400. These helpers
+# resolve Basic-auth credentials for a real user, so approve/decline act as that
+# user and never silently fall through to a token that cannot perform them.
+
+def has_bitbucket_user_credentials(config: Optional[Dict[str, Any]] = None) -> bool:
+    """True when user credentials (username + app_password) are available.
+
+    Checks env vars first, then the current home's config. Does not consider
+    named identities — those are selected explicitly with ``as_identity``.
+    """
+    if config is None:
+        config = load_config()
+    bb = config.get("bitbucket", {}) or {}
+    username = os.getenv("BITBUCKET_USERNAME") or bb.get("username")
+    app_password = os.getenv("BITBUCKET_APP_PASSWORD") or bb.get("app_password")
+    return bool(username and app_password)
+
+
+def _identity_credentials(name: str, config: Dict[str, Any]) -> tuple:
+    """Resolve (username, app_password) for a named identity, or raise."""
+    identities = (config.get("bitbucket") or {}).get("identities") or {}
+    entry = identities.get(name)
+    if entry is None:
+        available = ", ".join(sorted(identities)) or "none configured"
+        raise AuthenticationError(
+            f"Unknown Bitbucket identity '{name}'. Configured identities: {available}. "
+            f"Add one with: trinity config --bb-identity {name}=/path/to/home "
+            "(a TRINITY_HOME dir whose config.yaml has bitbucket.username + "
+            "bitbucket.app_password)."
+        )
+    # An entry may be a bare home path (string) or a dict with a home and/or
+    # inline username + app_password.
+    if isinstance(entry, str):
+        entry = {"home": entry}
+    if not isinstance(entry, dict):
+        raise AuthenticationError(
+            f"Malformed Bitbucket identity '{name}' in config (expected a path or a "
+            "mapping with home / username / app_password)."
+        )
+
+    username = entry.get("username")
+    app_password = entry.get("app_password")
+    home = entry.get("home")
+    if home and not (username and app_password):
+        home_bb = (load_config_from(home).get("bitbucket") or {})
+        username = username or home_bb.get("username")
+        app_password = app_password or home_bb.get("app_password")
+
+    if not (username and app_password):
+        where = f" (looked in {home})" if home else ""
+        raise AuthenticationError(
+            f"Bitbucket identity '{name}' has no usable user credentials{where}. "
+            "It needs a username + app_password, inline or in the referenced home's "
+            "config.yaml (bitbucket.username / bitbucket.app_password)."
+        )
+    return username, app_password
+
+
+def _no_user_auth_message(config: Dict[str, Any], repo: Optional[str]) -> str:
+    """Actionable error when a user-only action has no user credentials."""
+    bb = config.get("bitbucket") or {}
+    identities = sorted(bb.get("identities") or {})
+    has_token = bool(
+        os.getenv("BITBUCKET_REPO_TOKEN")
+        or bb.get("repo_token")
+        or bb.get("repo_tokens")
+    )
+    lead = (
+        "Bitbucket repository access tokens cannot approve or decline pull requests "
+        "— only a real user account can. "
+        if has_token
+        else "No Bitbucket user credentials are configured. "
+    )
+    opts = [
+        "configure a user app password: trinity config --bb-username USER "
+        "--bb-app-password PW"
+    ]
+    if identities:
+        opts.append("or act as a configured identity with --as <"
+                    + "|".join(identities) + ">")
+    else:
+        opts.append("or add one: trinity config --bb-identity devbot=~/.trinity-agent "
+                    "then pass --as devbot")
+    opts.append("or set TRINITY_HOME to a home whose config has user credentials")
+    return lead + "; ".join(opts) + "."
+
+
+def get_bitbucket_user_auth_headers(
+    config: Optional[Dict[str, Any]] = None,
+    repo: Optional[str] = None,
+    as_identity: Optional[str] = None,
+) -> Dict[str, str]:
+    """Return Basic-auth headers for a real Bitbucket user.
+
+    Unlike :func:`get_bitbucket_auth_headers`, this never uses a repository
+    access token: those cannot approve/decline PRs. Resolution:
+
+      1. ``as_identity`` — the named identity's credentials (authoritative; a
+         repo-token env var cannot override an explicit identity).
+      2. Otherwise env (BITBUCKET_USERNAME + BITBUCKET_APP_PASSWORD) then the
+         current home's bitbucket.username + bitbucket.app_password.
+
+    Raises AuthenticationError with a remediation hint when no user credentials
+    are available.
+    """
+    if config is None:
+        config = load_config()
+
+    if as_identity:
+        username, app_password = _identity_credentials(as_identity, config)
+        return _basic_headers(username, app_password)
+
+    bb = config.get("bitbucket", {}) or {}
+    username = os.getenv("BITBUCKET_USERNAME") or bb.get("username")
+    app_password = os.getenv("BITBUCKET_APP_PASSWORD") or bb.get("app_password")
+    if username and app_password:
+        return _basic_headers(username, app_password)
+
+    raise AuthenticationError(_no_user_auth_message(config, repo))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

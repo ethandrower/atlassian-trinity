@@ -265,7 +265,7 @@ def test_cli_flags_exist():
 def test_cli_ready_json(monkeypatch):
     from trinity import cli as cli_mod
     api = FakeAPI(pr=_pr())
-    monkeypatch.setattr("trinity.bitbucket.api.BitbucketAPI", lambda: api)
+    monkeypatch.setattr("trinity.bitbucket.api.BitbucketAPI", lambda *a, **k: api)
     monkeypatch.setattr(cli_mod, "_bb_context", lambda ctx: ("ws", "repo"))
     result = CliRunner().invoke(cli_mod.cli, ["--json", "bb", "ready", "42", "--client-visible"])
     assert result.exit_code == 0, result.output

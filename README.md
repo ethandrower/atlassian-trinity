@@ -65,7 +65,13 @@ trinity config --email you@co.com --token YOUR_TOKEN
 trinity config --cloud-id YOUR_CLOUD_ID --jira-url https://yourco.atlassian.net
 trinity config --bb-token YOUR_BB_TOKEN --bb-workspace yourworkspace
 
-# View current config (tokens masked)
+# Bitbucket user credentials — needed to approve/review PRs (a repo access
+# token cannot approve). See "Acting as a user" under Bitbucket Commands.
+trinity config --bb-username you@co.com --bb-app-password YOUR_APP_PASSWORD
+# ...or name identities to approve/comment as, e.g. `--as devbot`:
+trinity config --bb-identity devbot=~/.trinity-agent
+
+# View current config (tokens and app passwords masked)
 trinity config --list
 
 # Reset to defaults
@@ -390,24 +396,44 @@ trinity bb comment 47 --message "LGTM, approved."
 trinity bb comment 47 --message "Consider extracting this function" \
   --file src/search.py --line 42
 trinity bb comment 47 --message "Agreed" --reply-to 891
+trinity bb comment 47 --message "Reviewed" --as devbot   # authored by the devbot user
 ```
 
-Options: `--message/-m TEXT` (required), `--file TEXT`, `--line INT`, `--reply-to INT`
+Options: `--message/-m TEXT` (required), `--file TEXT`, `--line INT`, `--reply-to INT`, `--as TEXT` (see [Acting as a user](#acting-as-a-user-approve--review))
 
 ### `approve <pr-id>`
 
-Approve a pull request.
+Approve a pull request. Approval is recorded against a **user account**, so this always authenticates as a user — a repository access token cannot approve a PR (Bitbucket returns HTTP 400). Pass `--as <name>` to approve as a configured identity. See [Acting as a user](#acting-as-a-user-approve--review).
 
 ```bash
-trinity bb approve 47
+trinity bb approve 47 --as devbot
+TRINITY_HOME=~/.trinity-agent trinity bb approve 47
+```
+
+### `unapprove <pr-id>`
+
+Remove your (or `--as <name>`'s) approval.
+
+```bash
+trinity bb unapprove 47 --as devbot
+```
+
+### `request-changes <pr-id>`
+
+Request changes on a PR (a reviewer state, like approve — always acts as a user). `--remove` clears it.
+
+```bash
+trinity bb request-changes 47 --as devbot
+trinity bb request-changes 47 --remove --as devbot
 ```
 
 ### `decline <pr-id>`
 
-Decline a pull request.
+Decline a pull request. Acts as a user when credentials are available (so the decline is attributed) and as `--as <name>` when given; falls back to the repo access token otherwise.
 
 ```bash
 trinity bb decline 47
+trinity bb decline 47 --as devbot
 ```
 
 ### `merge <pr-id>`
@@ -470,6 +496,32 @@ trinity bb activity 47 --limit 20
 ```
 
 Options: `--limit INT` (default 50)
+
+### Acting as a user (approve / review)
+
+Some Bitbucket actions are tied to a **user**, not a repository: approving or requesting changes records *who* did it. A repository (or workspace) access token is not a user, so Bitbucket rejects `approve` / `request-changes` from one with **HTTP 400**. Trinity therefore runs these as a real user, and lets you choose which user with `--as <name>`:
+
+- **`approve`, `unapprove`, `request-changes`** always authenticate as a user (never a token).
+- **`comment`, `decline`, `update`, `ready`** act as a user when `--as` is given (so a comment is authored by that user), and otherwise keep the existing token/behaviour for the developer identity.
+- **Reads** (`list`, `show`, `diff`, `activity`, …) are unchanged — the repo access token path still serves them.
+
+A `--as <name>` identity resolves to a user's `username` + `app_password`. Configure named identities once — each can point at another `TRINITY_HOME` directory whose config already holds the credentials (no secret duplicated):
+
+```bash
+# Point "devbot" at the bot's home (its config.yaml has bitbucket.username + bitbucket.app_password)
+trinity config --bb-identity devbot=~/.trinity-agent
+
+trinity bb -r my-repo approve 47 --as devbot
+trinity bb -r my-repo comment 47 -m "Reviewed" --as devbot
+```
+
+Or give the current home its own user credentials (used when no `--as` is passed):
+
+```bash
+trinity config --bb-username you@co.com --bb-app-password <app-password>
+```
+
+Resolution for user actions: `--as <name>` (authoritative — immune to a `BITBUCKET_REPO_TOKEN` env override) → `BITBUCKET_USERNAME` + `BITBUCKET_APP_PASSWORD` env → current home's `bitbucket.username` + `bitbucket.app_password`. If none are available, the error tells you exactly how to fix it. `TRINITY_HOME=~/.trinity-agent trinity bb approve 47` also works — it runs the whole command as that home's user.
 
 ---
 
